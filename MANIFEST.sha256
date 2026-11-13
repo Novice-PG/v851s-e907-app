@@ -15,7 +15,7 @@ b76bcb7da1a65ea84c349c705ff6e976  ./linkr-bee/a7/certs/san.cnf
 a2e189861efdc8e00741a9578c49ffb2  ./linkr-bee/a7/main.conf
 ba9670d3a404f424308d1e944a2d94a5  ./linkr-bee/a7/__pycache__/linkr-bee-daemoncpython-313.pyc
 305b61f36fc3012433037db0435fa254  ./linkr-bee/a7/S53linkr
-14adc63f7efe61191e12ce6b3049f61e  ./linkr-bee/a7/S54bluetooth
+dbabf507f2ad95f85ed1f5ea8e0ab454  ./linkr-bee/a7/S54bluetooth
 0baf3ba5ebbe8146ac114737a3c8abd2  ./linkr-bee/a7/S99linkrbee.legacy
 3dd26a6466da109acf91ac56668b34a0  ./linkr-bee/apply-web.sh
 7c5f3836b656593fc2c000160cb91fb7  ./linkr-bee/build-linkr-ble.sh
@@ -134,8 +134,8 @@ d7aaaef27ff18a0e8deff9b29439090e  ./linkr-bee/web/vendor/xterm/xterm.js
 be51d01a17648fe7652c7527d3f56f25  ./linkr-bee/web/window.css
 388843da39f6297b0b5fb3b8ad88416d  ./NOTICE
 24acb459c696faa2c0b17a94b5e4438e  ./prj.conf
-7db167d24cd41e4102b06550d17014b6  ./README.md
-b2b4b20f228b7d87299d7e9b7b12a40e  ./README.zh-CN.md
+77945a6a24fbb4a53c44eae75de0aea2  ./README.md
+e96f74b15230635ed49d378a55bce277  ./README.zh-CN.md
 fb90da9beaeb3984de9ca7de6ac49f1b  ./src/board_early.c
 615ba3bb29442712a176bbc272377bae  ./src/linkr_bridge.c
 77e3ffa8bd047b39c2df80286c58dee4  ./src/linkr_bridge.h

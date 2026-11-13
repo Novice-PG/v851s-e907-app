@@ -179,6 +179,20 @@ bring_up() {
 	[ -c "$TTY" ] || { say "$TTY missing (uart2 disabled?)"; return 1; }
 
 	wait_for_wifi
+
+	# XR829's hciattach reads /etc/bluetooth/xr_bt.conf and otherwise invents
+	# a random BD_ADDR (and, on a full flash, a different one every time).
+	# Derive a locally-administered address from the efuse WiFi MAC so the
+	# BLE identity survives reflashing.
+	if [ -r /sys/class/net/wlan0/address ]; then
+		wmac=$(cat /sys/class/net/wlan0/address)
+		btmac="22:22:$(echo "$wmac" | cut -d: -f3-6)"
+		echo "$btmac" | awk -F: \
+			'{printf "%s %s %s %s %s %s\n", $1,$2,$3,$4,$5,$6}' \
+			> /etc/bluetooth/xr_bt.conf
+		say "BT address $btmac (from $wmac)"
+	fi
+
 	# Let the first post-association scan burst finish before we touch the
 	# shared XR829 BT side.
 	sleep 5
