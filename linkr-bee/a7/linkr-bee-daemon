@@ -1,0 +1,1814 @@
+#!/usr/bin/env python3
+"""
+Linkr Bee LAN bridge for the V851S (A7 side).
+
+Wires the Linkr Bee web terminal to the E907's UART3 over rpmsg:
+
+    browser --ws://<board>/ws--> this daemon --rpmsg--> E907 --> UART3
+
+The daemon implements the Linkr Bee LAN protocol (see radxa/linkr-bee
+src/ws_bridge.c and src/serial_session.c):
+
+  * GET /ws        WebSocket upgrade, binary frames = serial bytes,
+                   text frames = "@control ..." session commands
+  * everything else is served from the web/ directory of linkr-bee
+
+Only the Python standard library is used (the board has Python 3.9).
+"""
+
+import argparse
+import base64
+import ctypes
+import fcntl
+import hashlib
+import json
+import os
+import re
+import socket
+import struct
+import subprocess
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
+
+WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+MAX_CLIENTS = 4
+OWNER_IDLE_SECONDS = 3.0
+MAX_FRAME = 1 << 20
+
+# Unix socket protocol shared with /usr/bin/linkr-ble (see linkr_ble.c):
+#   type(1) length(2, LE) payload
+BLE_SOCK_PATH = "/var/run/linkr-bee.sock"
+FRAME_DATA = 0x01
+FRAME_CTL_REQ = 0x02
+FRAME_CTL_RSP = 0x03
+FRAME_HELLO = 0x10
+FRAME_NAME = 0x11          # daemon -> linkr-ble: advertised name changed
+FRAME_EVENT = 0x12         # daemon -> linkr-ble: async mgmt event (reqid,flags,text)
+
+ADV_NAME = "Linkr Bee V851S"
+FIRMWARE_VERSION = "v851s-lizard-e907-v10"
+
+# Custom BLE advertised name, persisted on UDISK (mirrors the firmware's
+# `linkr/ble/name` settings key). /var is tmpfs, so it must live on UDISK.
+NAME_FILE = "/mnt/UDISK/persist/ble-name"
+NAME_MAX = 29
+
+# Persistent state for the LAN bridge features (all on UDISK: /var is tmpfs).
+STATE_DIR = "/mnt/UDISK/persist"
+WS_TOKEN_FILE = STATE_DIR + "/ws-token"
+WEBDAV_FILE = STATE_DIR + "/webdav-url"
+TARGET_FILE = STATE_DIR + "/target"
+BOND_LABELS_FILE = STATE_DIR + "/bond-labels"
+# BlueZ on this build was configured with --localstatedir=/etc, so the link
+# keys live here rather than in /var/lib/bluetooth.
+BLUEZ_DIR = "/etc/lib/bluetooth"
+WPA_SOCK = "/etc/wifi/wpa_supplicant/sockets"
+WCTL = "/usr/bin/wctl"
+
+RPMSG_CREATE_EPT_IOCTL = 0x4028B501
+RPMSG_DESTROY_EPT_IOCTL = 0x0000B502
+RPMSG_ADDR_ANY = 0xFFFFFFFF
+
+
+def log(message):
+    sys.stdout.write("%s %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), message))
+    sys.stdout.flush()
+
+
+# --------------------------------------------------------------------------
+# rpmsg endpoint (rpmsg_char)
+# --------------------------------------------------------------------------
+
+class EndpointInfo(ctypes.Structure):
+    _fields_ = [
+        ("name", ctypes.c_char * 32),
+        ("src", ctypes.c_uint32),
+        ("dst", ctypes.c_uint32),
+    ]
+
+
+def _rpmsg_devices():
+    found = set()
+    try:
+        for name in os.listdir("/dev"):
+            if name.startswith("rpmsg") and name[5:].isdigit():
+                found.add(name)
+    except OSError:
+        pass
+    return found
+
+
+class RpmsgBridge:
+    """Owns one rpmsg endpoint and pumps RX data into `on_data`."""
+
+    def __init__(self, on_data, max_chunk=256):
+        self.on_data = on_data
+        self.ctrl_fd = None
+        self.fd = None
+        self.path = None
+        self.send_lock = threading.Lock()
+        self.ready = False
+        # rpmsg_char rejects writes larger than the endpoint MTU
+        # (EMSGSIZE / errno 90). The Linux rpmsg buffer is 512 bytes, minus
+        # the 16-byte rpmsg header, so 256 leaves plenty of headroom and
+        # matches RX_CHUNK on the E907 side.
+        self.max_chunk = max_chunk
+
+    def _create_endpoint(self):
+        before = _rpmsg_devices()
+
+        ctrl = os.open("/dev/rpmsg_ctrl0", os.O_RDWR)
+        info = EndpointInfo()
+        info.name = b"rpmsg_chrdev"
+        info.src = RPMSG_ADDR_ANY
+        info.dst = 0
+        try:
+            fcntl.ioctl(ctrl, RPMSG_CREATE_EPT_IOCTL, bytes(info))
+        except OSError:
+            os.close(ctrl)
+            raise
+
+        deadline = time.time() + 5.0
+        path = None
+        while time.time() < deadline:
+            new = _rpmsg_devices() - before
+            if new:
+                path = "/dev/" + sorted(new)[0]
+                break
+            time.sleep(0.05)
+        if path is None:
+            os.close(ctrl)
+            raise RuntimeError("no /dev/rpmsgN appeared")
+
+        fd = os.open(path, os.O_RDWR)
+
+        # Tell the E907 firmware the A7 endpoint address. It replies once the
+        # bridge is armed.
+        os.write(fd, b"LINKR1\n")
+        reply = b""
+        try:
+            import select
+            if select.select([fd], [], [], 2.0)[0]:
+                reply = os.read(fd, 4096)
+        except OSError:
+            pass
+
+        self.ctrl_fd = ctrl
+        self.fd = fd
+        self.path = path
+        self.ready = True
+        log("rpmsg endpoint %s ready, handshake reply %r" % (path, reply))
+
+    def _drop_endpoint(self):
+        self.ready = False
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+        if self.ctrl_fd is not None:
+            try:
+                fcntl.ioctl(self.ctrl_fd, RPMSG_DESTROY_EPT_IOCTL)
+            except OSError:
+                pass
+            try:
+                os.close(self.ctrl_fd)
+            except OSError:
+                pass
+            self.ctrl_fd = None
+
+    def _run(self):
+        while True:
+            try:
+                self._create_endpoint()
+            except Exception as exc:  # noqa: BLE001 - keep retrying forever
+                log("rpmsg setup failed: %s" % exc)
+                time.sleep(2.0)
+                continue
+
+            try:
+                while True:
+                    data = os.read(self.fd, 4096)
+                    if not data:
+                        raise OSError("endpoint closed")
+                    self.on_data(data)
+            except OSError as exc:
+                log("rpmsg RX stopped: %s" % exc)
+            finally:
+                self._drop_endpoint()
+
+            time.sleep(1.0)
+
+    def start(self):
+        threading.Thread(target=self._run, name="rpmsg", daemon=True).start()
+
+    def send(self, data):
+        """Write `data` to the E907, splitting it into MTU-sized chunks.
+
+        A single rpmsg message cannot carry more than the endpoint MTU;
+        the browser sends whatever the user types or pastes, so chunking
+        has to happen here rather than in the WebSocket layer.
+        """
+        with self.send_lock:
+            if self.fd is None:
+                raise OSError("rpmsg endpoint not ready")
+            view = memoryview(data)
+            sent = 0
+            while sent < len(view):
+                chunk = view[sent:sent + self.max_chunk]
+                n = os.write(self.fd, chunk)
+                if n <= 0:
+                    break
+                sent += n
+            return sent
+
+
+class SerialWriter:
+    """Feed serial bytes to the E907 from a dedicated thread.
+
+    UART TX is a real 115200 baud line, so a paste of tens of kilobytes
+    takes seconds to leave the wire. If the WebSocket reader wrote to
+    rpmsg synchronously, control frames (@c?, @i?) would sit unread behind
+    the bulk data. Instead the reader enqueues and returns immediately,
+    while this thread paces the writes. The queue is bounded: when the
+    browser sends faster than the line can carry, excess bytes are
+    dropped and counted, matching the firmware's behaviour.
+    """
+
+    def __init__(self, bridge, limit=262144, chunk=256):
+        self.bridge = bridge
+        self.limit = limit
+        self.chunk = chunk
+        self.buf = bytearray()
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.dropped = 0
+        self.drop_logged = 0
+        self.thread = threading.Thread(target=self._run, name="serial-tx",
+                                       daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def write(self, data):
+        """Queue `data`; return how many bytes were accepted."""
+        with self.cond:
+            room = self.limit - len(self.buf)
+            if room <= 0:
+                self.dropped += len(data)
+                self.cond.notify()
+                self._log_drops()
+                return 0
+            if len(data) > room:
+                self.dropped += len(data) - room
+                data = data[:room]
+            self.buf += data
+            self.cond.notify()
+            self._log_drops()
+            return len(data)
+
+    def _log_drops(self):
+        mark = self.dropped // 8192
+        if mark != self.drop_logged:
+            self.drop_logged = mark
+            log("serial queue full: dropped %d bytes so far (limit %d)" %
+                (self.dropped, self.limit))
+
+    def _run(self):
+        while True:
+            with self.cond:
+                while not self.buf:
+                    self.cond.wait()
+                chunk = bytes(self.buf[:self.chunk])
+                del self.buf[:self.chunk]
+            try:
+                self.bridge.send(chunk)
+            except OSError as exc:
+                log("rpmsg TX failed: %s; dropped %d bytes" % (exc, len(chunk)))
+                time.sleep(0.2)
+
+
+# --------------------------------------------------------------------------
+# WebSocket helpers
+# --------------------------------------------------------------------------
+
+def _recv_exact(sock, size):
+    chunks = []
+    left = size
+    while left > 0:
+        chunk = sock.recv(left)
+        if not chunk:
+            raise ConnectionError("peer closed")
+        chunks.append(chunk)
+        left -= len(chunk)
+    return b"".join(chunks)
+
+
+def ws_recv_message(sock):
+    """Return (opcode, payload), reassembling fragmented data messages."""
+    fragments = b""
+    first_opcode = None
+    while True:
+        header = _recv_exact(sock, 2)
+        fin = header[0] & 0x80
+        opcode = header[0] & 0x0F
+        masked = header[1] & 0x80
+        length = header[1] & 0x7F
+
+        if length == 126:
+            length = struct.unpack("!H", _recv_exact(sock, 2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", _recv_exact(sock, 8))[0]
+        if length > MAX_FRAME:
+            raise ValueError("websocket frame too large")
+
+        mask = _recv_exact(sock, 4) if masked else b""
+        data = _recv_exact(sock, length) if length else b""
+        if masked:
+            data = bytes(byte ^ mask[i % 4] for i, byte in enumerate(data))
+
+        if opcode == 0x0:
+            fragments += data
+            if fin:
+                return first_opcode or 0x1, fragments
+        elif opcode in (0x1, 0x2):
+            if fin:
+                return opcode, data
+            first_opcode = opcode
+            fragments = data
+        elif opcode in (0x8, 0x9, 0xA):
+            return opcode, data
+        else:
+            raise ValueError("unsupported websocket opcode %d" % opcode)
+
+
+# --------------------------------------------------------------------------
+# Session state (mirrors linkr-bee serial_session.c)
+# --------------------------------------------------------------------------
+
+def _local_ip():
+    """Best-effort LAN address without sending a packet.
+
+    A UDP `connect` only picks a route; several probes are tried so this also
+    works on networks that are not 192.168.0.0/24.
+    """
+    for probe_ip in ("1.1.1.1", "8.8.8.8", "192.168.0.1"):
+        try:
+            probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                probe.connect((probe_ip, 1))
+                addr = probe.getsockname()[0]
+                if addr and addr != "0.0.0.0":
+                    return addr
+            finally:
+                probe.close()
+        except OSError:
+            continue
+    return "0.0.0.0"
+
+
+def _read_text(path, limit=4096):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(limit).decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+
+
+def _write_text(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _load_json(path, default):
+    raw = _read_text(path, 65536)
+    if not raw:
+        return default
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return default
+    return value if isinstance(value, type(default)) else default
+
+
+def _save_json(path, value):
+    try:
+        _write_text(path, json.dumps(value, ensure_ascii=False))
+    except OSError as exc:
+        log("cannot save %s: %s" % (path, exc))
+        return False
+    return True
+
+
+def _run(args, timeout=60):
+    """Run a helper and return (rc, combined output)."""
+    try:
+        proc = subprocess.run(args, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, timeout=timeout)
+        return proc.returncode, proc.stdout.decode("utf-8", "replace")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, str(exc)
+
+
+def _wifi_status():
+    """Parse `wctl status` into the firmware's wifi status vocabulary."""
+    _rc, out = _run([WCTL, "status"], timeout=15)
+    info = {"state": "UNKNOWN", "ssid": "", "ip": "", "signal": ""}
+    for line in out.splitlines():
+        key, sep, value = line.partition(":")
+        if not sep:
+            continue
+        key = key.strip()
+        value = value.strip()
+        if key == "state":
+            info["state"] = value
+        elif key == "ssid":
+            info["ssid"] = "" if value == "-" else value
+        elif key == "ip":
+            info["ip"] = "" if value == "-" else value.split("/")[0]
+        elif key == "signal":
+            info["signal"] = value
+    connected = info["state"] == "COMPLETED" and bool(info["ip"])
+    return connected, info
+
+
+def _wifi_status_line():
+    connected, info = _wifi_status()
+    return "OK wifi=%s,ssid=%s,ip=%s\r\n" % (
+        "connected" if connected else "off",
+        (info["ssid"] or "-") if connected else "-",
+        (info["ip"] or "down") if connected else "down")
+
+
+def _channel_of(freq):
+    try:
+        f = int(freq)
+    except (TypeError, ValueError):
+        return 0
+    if 2412 <= f <= 2484:
+        return 14 if f == 2484 else (f - 2407) // 5
+    if 5000 <= f <= 5900:
+        return (f - 5000) // 5
+    return 0
+
+
+def _security_name(flags):
+    text = (flags or "").upper()
+    if "WPA3" in text or "SAE" in text:
+        return "wpa3"
+    if "WPA2" in text:
+        return "wpa2"
+    if "WPA" in text:
+        return "wpa"
+    if "WEP" in text:
+        return "wep"
+    return "open"
+
+
+def _scan_results():
+    """Return [(ssid, security, channel, rssi)] from the wpa_supplicant cache."""
+    _rc, out = _run(["wpa_cli", "-i", "wlan0", "-p", WPA_SOCK,
+                     "scan_results"], timeout=20)
+    rows = []
+    best = {}
+    for line in out.splitlines():
+        if line.startswith("bssid") or "\t" not in line:
+            continue
+        cols = line.split("\t")
+        if len(cols) < 5:
+            continue
+        freq, signal, flags, ssid = cols[1], cols[2], cols[3], cols[4]
+        # The XR829 firmware sometimes reports an all-zero BSSID entry; wpa_cli
+        # renders its SSID as literal "\x00" escapes. Drop anything that is not
+        # printable UTF-8 so the browser list only shows real networks.
+        if not ssid or "\\x" in ssid or any(
+                ord(ch) < 0x20 or ord(ch) == 0x7F for ch in ssid):
+            continue
+        try:
+            rssi = int(signal)
+        except ValueError:
+            rssi = -999
+        row = (ssid, _security_name(flags), _channel_of(freq), rssi)
+        prev = best.get(ssid)
+        if prev is None or rssi > prev[3]:
+            best[ssid] = row
+    rows = sorted(best.values(), key=lambda item: item[3], reverse=True)
+    return rows
+
+
+def _bluez_bonds():
+    """List persisted BlueZ peers as (id, name, connected)."""
+    connected = set()
+    _rc, out = _run(["hcitool", "con"], timeout=10)
+    for line in out.splitlines():
+        match = re.search(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})", line)
+        if match:
+            connected.add(match.group(1).upper())
+
+    bonds = []
+    try:
+        adapters = os.listdir(BLUEZ_DIR)
+    except OSError:
+        return bonds
+    for adapter in adapters:
+        base = os.path.join(BLUEZ_DIR, adapter)
+        if not re.match(r"^[0-9A-Fa-f:]{17}$", adapter) or not os.path.isdir(base):
+            continue
+        for peer in os.listdir(base):
+            if not re.match(r"^[0-9A-Fa-f:]{17}$", peer):
+                continue
+            info_path = os.path.join(base, peer, "info")
+            address_type = 0
+            name = ""
+            try:
+                with open(info_path, "r", errors="replace") as fh:
+                    for line in fh:
+                        if line.startswith("AddressType="):
+                            address_type = 1 if line.split("=", 1)[1].strip().lower() == "random" else 0
+                        elif line.startswith("Name="):
+                            name = line.split("=", 1)[1].strip()
+            except OSError:
+                pass
+            addr = peer.upper()
+            bonds.append({
+                "id": "%d/%s" % (address_type, addr),
+                "name": name,
+                "self": addr in connected,
+                "peer": peer,
+                "adapter": adapter,
+            })
+    bonds.sort(key=lambda item: item["id"])
+    return bonds
+
+
+def _bond_address(value):
+    match = re.match(r"^([01])/((?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})$", value.strip())
+    if not match:
+        return None
+    return "%s/%s" % (match.group(1), match.group(2).upper())
+
+
+def _label_hex(text):
+    return text.encode("utf-8").hex()
+
+
+def _label_from_hex(value):
+    try:
+        return bytes.fromhex(value).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _parse_webdav_spec(spec):
+    """Split `@d=` into (base_url, user, password).
+
+    Accepted forms:
+      http://host/path/
+      http://user:pass@host/path/
+      http://host/path/,user,pass
+    """
+    text = (spec or "").strip()
+    if not text:
+        return "", "", ""
+    base, user, password = text, "", ""
+    # The `url,user,pass` form is unambiguous: split from the right so a
+    # comma inside a URL path is only treated as a separator when there are
+    # two trailing fields.
+    parts = text.rsplit(",", 2)
+    if len(parts) == 3 and parts[0].startswith(("http://", "https://")):
+        base, user, password = parts[0], parts[1], parts[2]
+    parsed = urllib.parse.urlparse(base)
+    if parsed.username is not None:
+        user = urllib.parse.unquote(parsed.username)
+        password = urllib.parse.unquote(parsed.password or "")
+        host = parsed.hostname or ""
+        if parsed.port:
+            host = "%s:%d" % (host, parsed.port)
+        base = urllib.parse.urlunparse((
+            parsed.scheme, host, parsed.path, parsed.params,
+            parsed.query, parsed.fragment))
+    return base, user, password
+
+
+class WebDavUploader:
+    """Batch the target board's serial RX into WebDAV PUT uploads.
+
+    The ESP32 firmware uploads serial log files to a WebDAV collection. Here
+    the data is already in the A7 daemon, so a background thread buffers it
+    and PUTs a file every few seconds (or once ~4 KiB has accumulated):
+
+        <url>/log-<boot>-<seq>-<uptime>s.txt
+    """
+
+    FLUSH_BYTES = 4096
+    FLUSH_IDLE = 5.0
+    MAX_BUFFER = 65536
+
+    def __init__(self, session):
+        self.session = session
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.buf = bytearray()
+        self.seq = 0
+        self.files = 0
+        self.bytes_ok = 0
+        self.failures = 0
+        self.dropped = 0
+        self.last_feed = time.monotonic()
+        boot = _read_text("/proc/sys/kernel/random/boot_id", 64)
+        self.boot = (boot.split("-")[0] or "boot")[:8]
+        self.thread = threading.Thread(target=self._run, name="webdav",
+                                       daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def feed(self, data):
+        if not self.session.webdav_url:
+            return
+        with self.cond:
+            room = self.MAX_BUFFER - len(self.buf)
+            if room < len(data):
+                self.dropped += len(data) - max(room, 0)
+                data = data[:max(room, 0)]
+            self.buf += data
+            self.last_feed = time.monotonic()
+            if len(self.buf) >= self.FLUSH_BYTES:
+                self.cond.notify()
+
+    def flush(self):
+        with self.cond:
+            self.cond.notify_all()
+
+    def counters(self):
+        with self.lock:
+            return ("queue=%d http=%d failures=%d dropped=%d"
+                    % (len(self.buf), self.files, self.failures,
+                       self.dropped))
+
+    def _run(self):
+        while True:
+            with self.cond:
+                if len(self.buf) < self.FLUSH_BYTES:
+                    self.cond.wait(self.FLUSH_IDLE)
+                if not self.buf or not self.session.webdav_url:
+                    continue
+                chunk = bytes(self.buf)
+                self.buf = bytearray()
+                base = self.session.webdav_url
+                user = self.session.webdav_user
+                password = self.session.webdav_password
+            self._put(base, user, password, chunk)
+
+    def _put(self, base, user, password, chunk):
+        # A fresh sequence number per file, plus the boot id, keeps files
+        # unique even across daemon restarts.
+        with self.lock:
+            self.seq += 1
+            seq = self.seq
+        uptime = int(time.monotonic() - self.session.started)
+        name = "log-%s-%06d-%ds.txt" % (self.boot, seq, uptime)
+        url = base.rstrip("/") + "/" + urllib.parse.quote(name)
+        req = urllib.request.Request(url, data=chunk, method="PUT")
+        req.add_header("Content-Type", "text/plain; charset=utf-8")
+        if user:
+            token = base64.b64encode(
+                ("%s:%s" % (user, password)).encode("utf-8")).decode("ascii")
+            req.add_header("Authorization", "Basic " + token)
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                code = getattr(resp, "status", 200)
+                resp.read(256)
+            if not 200 <= int(code) < 300:
+                raise OSError("HTTP %s" % code)
+        except Exception as exc:  # noqa: BLE001 - upload is best effort
+            with self.lock:
+                self.failures += 1
+            log("webdav PUT %s failed: %s (%d bytes lost)"
+                % (url, exc, len(chunk)))
+            return
+        with self.lock:
+            self.files += 1
+            self.bytes_ok += len(chunk)
+        log("webdav PUT %s ok (%d bytes)" % (url, len(chunk)))
+
+
+class Session:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.clients = {}
+        self.next_id = 1
+        self.owner = 0
+        self.epoch = 1
+        self.owner_active = 0.0
+        # Clients that have used the control API at least once.  Mirrors
+        # `peer_managed` in the firmware: an explicit release means release,
+        # so such a client is not auto-claimed again while the console is
+        # free.  A client that never asked for control gets it on its first
+        # write when nobody owns the console.
+        self.managed = set()
+        self.started = time.monotonic()
+        self.ws_port = 80
+        self.ws_enabled = True
+        self.ws_token = self._load_token()
+        spec = _read_text(WEBDAV_FILE, 2048)
+        (self.webdav_url, self.webdav_user,
+         self.webdav_password) = _parse_webdav_spec(spec)
+        self.target = _read_text(TARGET_FILE, 64)
+        self.bond_labels = _load_json(BOND_LABELS_FILE, {})
+        self.bond_names = self.bond_labels
+        self.uart_config = "115200,8,N,1,none"
+        # Set by main() once the rpmsg endpoint exists.
+        self.bridge = None
+        self.webdav = WebDavUploader(self)
+        # UART reconfiguration replies (LINKRCFG ...) are parsed out of the
+        # rpmsg stream and wake the thread waiting in `@u=`.
+        self._ctl_event = threading.Event()
+        self._ctl_reply = ""
+        self._ctl_pending = None
+        self._ctl_lock = threading.Lock()
+        self.upload_bytes = 0
+
+    # -- rpmsg RX: split control replies from target serial data -----------
+
+    def _handle_ctl_reply(self, raw):
+        text = raw.decode("utf-8", "replace").strip()
+        self._ctl_reply = text
+        self._ctl_event.set()
+        log("E907 control reply: %s" % text)
+
+    def _deliver(self, data):
+        if not data:
+            return
+        self.upload_bytes += len(data)
+        self.webdav.feed(data)
+        self.broadcast(data)
+
+    def on_bridge_data(self, data):
+        if not data:
+            return
+        if self._ctl_pending is not None:
+            self._ctl_pending += data
+            if len(self._ctl_pending) > 1024:
+                pending = bytes(self._ctl_pending)
+                self._ctl_pending = None
+                self._handle_ctl_reply(pending)
+                return
+            idx = self._ctl_pending.find(b"\n")
+            if idx < 0:
+                return
+            line = bytes(self._ctl_pending[:idx])
+            rest = bytes(self._ctl_pending[idx + 1:])
+            self._ctl_pending = None
+            self._handle_ctl_reply(line)
+            self._deliver(rest)
+            return
+
+        if data.startswith(b"LINKRCFG "):
+            idx = data.find(b"\n")
+            if idx < 0:
+                self._ctl_pending = bytearray(data)
+                return
+            self._handle_ctl_reply(data[:idx])
+            self._deliver(data[idx + 1:])
+            return
+
+        self._deliver(data)
+
+    # -- LAN settings persisted on UDISK -----------------------------------
+
+    @staticmethod
+    def _load_token():
+        token = _read_text(WS_TOKEN_FILE, 64).lower()
+        return token if re.match(r"^[0-9a-f]{32}$", token) else ""
+
+    def _save_token(self):
+        if self.ws_token:
+            _write_text(WS_TOKEN_FILE, self.ws_token + "\n")
+        else:
+            try:
+                os.remove(WS_TOKEN_FILE)
+            except OSError:
+                pass
+
+    def emit_event(self, client, reqid, text, final=False, error=False):
+        if client is None or reqid == 0:
+            return
+        flags = (0x0001 if final else 0) | (0x0002 if error else 0)
+        try:
+            client.send_event(reqid, flags, text)
+        except (OSError, AttributeError):
+            pass
+
+    def _wifi_connect_thread(self, client, reqid, ssid, password):
+        self.emit_event(client, reqid,
+                        "@event wifi operation=%d phase=queued result=0 "
+                        "state=off ip=down\r\n" % reqid)
+        args = [WCTL, "connect", ssid]
+        if password:
+            args += ["password", password]
+        rc, _out = _run(args, timeout=120)
+        connected, info = _wifi_status()
+        if rc == 0 and connected:
+            self.emit_event(
+                client, reqid,
+                "@event wifi operation=%d phase=ready result=0 "
+                "state=connected ip=%s\r\n" % (reqid, info["ip"]),
+                final=True)
+        else:
+            self.emit_event(
+                client, reqid,
+                "@event wifi operation=%d phase=failed result=%d "
+                "state=off ip=down error=%d\r\n" % (reqid, rc, rc),
+                final=True, error=True)
+
+    def _wifi_off_thread(self, client, reqid):
+        connected, info = _wifi_status()
+        if connected and info["ssid"]:
+            _run([WCTL, "forget", info["ssid"]], timeout=20)
+        _run([WCTL, "disconnect"], timeout=20)
+        self.emit_event(client, reqid,
+                        "@event wifi operation=%d phase=off result=0 "
+                        "state=off ip=down\r\n" % reqid,
+                        final=True)
+
+    def _wifi_scan_thread(self, client, reqid):
+        # wctl list performs the scan and waits for it to finish.
+        _run([WCTL, "list"], timeout=90)
+        rows = _scan_results()
+        for ssid, security, channel, rssi in rows:
+            self.emit_event(
+                client, reqid,
+                "@scan result %s %s ch=%d %ddBm\r\n" %
+                (ssid, security, channel, rssi))
+        self.emit_event(client, reqid, "@scan done\r\n", final=True)
+
+    def _bonds_reply(self):
+        bonds = _bluez_bonds()
+        lines = ["OK bonds pending=0 result=0\r\n"]
+        for bond in bonds:
+            lines.append("BOND %s self=%d\r\n" %
+                         (bond["id"], 1 if bond["self"] else 0))
+        return "".join(lines)
+
+    def _bonds_names_reply(self):
+        bonds = _bluez_bonds()
+        lines = ["OK bonds names\r\n"]
+        for bond in bonds:
+            label = self.bond_names.get(bond["id"], bond["name"])
+            label = label.replace("\\", "\\\\").replace('"', '\\"')
+            lines.append('NAME %s "%s"\r\n' % (bond["id"], label))
+        return "".join(lines)
+
+    def _bond_command(self, line):
+        if line in ("@bonds?", "@linkr bonds?"):
+            return self._bonds_reply()
+        if line in ("@bonds names?", "@linkr bonds names?"):
+            return self._bonds_names_reply()
+        prefix = None
+        for candidate in ("@linkr bonds ", "@bonds "):
+            if line.startswith(candidate):
+                prefix = candidate
+                break
+        if prefix is None:
+            return None
+        rest = line[len(prefix):]
+
+        if rest == "name" or rest.startswith("name "):
+            label = rest[5:] if len(rest) > 4 else ""
+            self_bond = next((b for b in _bluez_bonds() if b["self"]), None)
+            if self_bond is None:
+                return "ERR bonds not found\r\n"
+            self.bond_names[self_bond["id"]] = label
+            if not _save_json(BOND_LABELS_FILE, self.bond_names):
+                return "ERR bonds save\r\n"
+            return "OK bonds name\r\n"
+
+        if rest.startswith("label "):
+            parts = rest[6:].split()
+            if not parts:
+                return "ERR bonds address\r\n"
+            bond_id = _bond_address(parts[0])
+            if bond_id is None:
+                return "ERR bonds address\r\n"
+            if not any(b["id"] == bond_id for b in _bluez_bonds()):
+                return "ERR bonds not found\r\n"
+            if len(parts) == 1:
+                label = self.bond_labels.get(bond_id)
+                if label is None:
+                    return "OK bonds label=%s none\r\n" % bond_id
+                return "OK bonds label=%s hex=%s\r\n" % (
+                    bond_id, _label_hex(label))
+            if parts[1] == "clear":
+                self.bond_labels.pop(bond_id, None)
+            else:
+                label = _label_from_hex(parts[1])
+                if label is None:
+                    return "ERR bonds label hex\r\n"
+                if len(label.encode("utf-8")) > 48:
+                    return "ERR bonds label length\r\n"
+                self.bond_labels[bond_id] = label
+            if not _save_json(BOND_LABELS_FILE, self.bond_labels):
+                return "ERR bonds save\r\n"
+            return "OK bonds label=%s hex=%s\r\n" % (
+                bond_id, _label_hex(self.bond_labels.get(bond_id, "")))
+
+        if rest.startswith("remove "):
+            bond_id = _bond_address(rest[7:].strip())
+            if bond_id is None:
+                return "ERR bonds address\r\n"
+            bond = next((b for b in _bluez_bonds() if b["id"] == bond_id), None)
+            if bond is None:
+                return "ERR bonds not found\r\n"
+            path = os.path.join(BLUEZ_DIR, bond["adapter"], bond["peer"])
+            _run(["rm", "-rf", path], timeout=15)
+            self.bond_names.pop(bond_id, None)
+            _save_json(BOND_LABELS_FILE, self.bond_names)
+            return "OK bonds queued\r\n"
+
+        return "ERR bonds unsupported\r\n"
+
+    def _ws_command(self, line, client):
+        if line in ("@s?", "@socket?"):
+            return self.ws_status(client)
+        if line in ("@s on", "@socket on"):
+            self.ws_enabled = True
+            return "OK ws on\r\n"
+        if line in ("@s off", "@socket off"):
+            self.ws_enabled = False
+            return "OK ws off\r\n"
+        if line in ("@s token", "@socket token"):
+            self.ws_token = os.urandom(16).hex()
+            self._save_token()
+            return self.ws_status(client)
+        if line in ("@s token off", "@socket token off"):
+            self.ws_token = ""
+            self._save_token()
+            return "OK ws token off (LAN access is unauthenticated)\r\n"
+        for prefix in ("@s token=", "@socket token="):
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip().lower()
+                if not re.match(r"^[0-9a-f]{32}$", value):
+                    return ("ERR ws token=22 (expected 32 lowercase hex)\r\n")
+                self.ws_token = value
+                self._save_token()
+                return self.ws_status(client)
+        return None
+
+    def _webdav_command(self, line):
+        if line in ("@d?", "@webdav?"):
+            if not self.webdav_url:
+                return "OK webdav=off,url=-\r\n"
+            url = self.webdav_url
+            if self.webdav_user:
+                url = "%s user=%s pass=%s" % (
+                    url, self.webdav_user,
+                    "*" * len(self.webdav_password)
+                    if self.webdav_password else "-")
+            return "OK webdav=on,url=%s\r\n" % url
+        if line in ("@d off", "@webdav off"):
+            self.webdav_url = ""
+            self.webdav_user = ""
+            self.webdav_password = ""
+            self.webdav.flush()
+            try:
+                os.remove(WEBDAV_FILE)
+            except OSError:
+                pass
+            return "OK webdav off\r\n"
+        for prefix in ("@d=", "@webdav="):
+            if line.startswith(prefix):
+                spec = line[len(prefix):].strip()
+                if not spec:
+                    return "ERR format: @d=http://host/path/\r\n"
+                base, user, password = _parse_webdav_spec(spec)
+                parsed = urllib.parse.urlparse(base)
+                if (parsed.scheme not in ("http", "https")
+                        or not parsed.netloc):
+                    return "ERR webdav=22\r\n"
+                self.webdav_url = base
+                self.webdav_user = user
+                self.webdav_password = password
+                try:
+                    _write_text(WEBDAV_FILE, spec + "\n")
+                except OSError:
+                    return "ERR webdav=5\r\n"
+                self.webdav.flush()
+                return "OK webdav=on,url=%s%s\r\n" % (
+                    base, " user=%s" % user if user else "")
+        return None
+
+    def _target_command(self, line):
+        if line in ("@target?", "@linkr target?"):
+            return "OK target=%s\r\n" % (self.target or "none")
+        if line in ("@target clear", "@linkr target clear"):
+            self.target = ""
+            try:
+                os.remove(TARGET_FILE)
+            except OSError:
+                pass
+            return "OK target=none\r\n"
+        for prefix in ("@target=", "@linkr target="):
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip().lower()
+                if not re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
+                                r"[0-9a-f]{4}-[0-9a-f]{12}$", value):
+                    return "ERR target 22\r\n"
+                self.target = value
+                try:
+                    _write_text(TARGET_FILE, value + "\n")
+                except OSError:
+                    return "ERR target storage 5\r\n"
+                return "OK target=%s\r\n" % value
+        return None
+
+    def _send_uart_ctl(self, payload, timeout=4.0):
+        """Send a `LINKRCFG` line to the E907 and wait for its reply."""
+        if self.bridge is None:
+            return None
+        with self._ctl_lock:
+            self._ctl_event.clear()
+            self._ctl_reply = ""
+            try:
+                self.bridge.send(("LINKRCFG %s\n" % payload).encode("ascii"))
+            except OSError as exc:
+                log("uart control send failed: %s" % exc)
+                return None
+            if not self._ctl_event.wait(timeout):
+                return None
+            return self._ctl_reply
+
+    def _uart_command(self, line):
+        if line in ("@u?", "@uart?"):
+            reply = self._send_uart_ctl("?", timeout=2.0)
+            if reply and reply.startswith("LINKRCFG OK uart="):
+                self.uart_config = reply.split("uart=", 1)[1].strip()
+            return "OK uart=%s\r\n" % self.uart_config
+        for prefix in ("@u=", "@uart="):
+            if line.startswith(prefix):
+                value = line[len(prefix):].strip().lower()
+                parts = [p.strip() for p in value.split(",")]
+                if len(parts) != 5 or not parts[0].isdigit():
+                    return "ERR format: @u=115200,8,n,1,n\r\n"
+                baud = int(parts[0])
+                if baud < 300 or baud > 4000000:
+                    return "ERR uart_config=22\r\n"
+                if parts[1] not in ("5", "6", "7", "8"):
+                    return "ERR uart_config=22\r\n"
+                if parts[2] not in ("n", "e", "o"):
+                    return "ERR uart_config=22\r\n"
+                if parts[3] not in ("1", "2"):
+                    return "ERR uart_config=22\r\n"
+                if parts[4] in ("n", "none", "0"):
+                    flow = "n"
+                elif parts[4] in ("r", "rtscts", "1"):
+                    flow = "rtscts"
+                else:
+                    return "ERR uart_config=22\r\n"
+                if self.bridge is None:
+                    return "ERR uart_config=19\r\n"
+                setting = "%d,%s,%s,%s,%s" % (baud, parts[1], parts[2],
+                                              parts[3], flow)
+                reply = self._send_uart_ctl(setting)
+                if reply is None:
+                    return "ERR uart_config=110 (E907 timeout)\r\n"
+                if reply.startswith("LINKRCFG OK"):
+                    parts = reply.split("uart=", 1)
+                    if len(parts) == 2:
+                        self.uart_config = parts[1].strip()
+                    return "OK uart=%s\r\n" % self.uart_config
+                err = reply.split("ERR=", 1)
+                code = err[1].strip() if len(err) == 2 else "?"
+                return "ERR uart_configure=%s\r\n" % code
+        return None
+
+
+    def bump_epoch(self):
+        self.epoch = (self.epoch + 1) & 0xFFFFFFFF
+        if self.epoch == 0:
+            self.epoch = 1
+
+    def register(self, client):
+        with self.lock:
+            client.id = self.next_id
+            self.next_id += 1
+            self.clients[client.id] = client
+            return client.id
+
+    def unregister(self, client):
+        with self.lock:
+            self.clients.pop(client.id, None)
+            self.managed.discard(client.id)
+            if self.owner == client.id:
+                self.owner = 0
+                self.bump_epoch()
+
+    def set_owner(self, client_id):
+        if self.owner != client_id:
+            self.owner = client_id
+            self.bump_epoch()
+        self.owner_active = time.monotonic()
+
+    def status(self, client):
+        with self.lock:
+            mode = "available"
+            if client is not None:
+                if self.owner == client.id:
+                    mode = "control"
+                elif self.owner:
+                    mode = "readonly"
+            return ("OK control self=%d owner=%d mode=%s epoch=%d peers=%d "
+                    "ble_max=2 linkr_reserved=0\r\n" %
+                    (client.id if client else 0, self.owner, mode,
+                     self.epoch, max(1, len(self.clients))))
+
+    def control(self, client, action):
+        action = action.strip()
+        with self.lock:
+            # linkr-ble multiplexes every BLE host over one daemon socket, so
+            # an explicit release from one phone must not leave the shared
+            # bridge permanently unmanaged.  Per-session identity only exists
+            # for LAN WebSocket clients.
+            if getattr(client, "transport", "") != "ble":
+                self.managed.add(client.id)
+            if action in ("?", "control?"):
+                pass
+            elif action == "claim":
+                self.set_owner(client.id)
+            elif action == "claim idle":
+                idle = (time.monotonic() - self.owner_active) >= OWNER_IDLE_SECONDS
+                if self.owner and self.owner != client.id and not idle:
+                    return "ERR control=busy\r\n"
+                self.set_owner(client.id)
+            elif action == "release":
+                if self.owner != client.id:
+                    return "ERR control=not_owner\r\n"
+                self.owner = 0
+                self.bump_epoch()
+            elif action.startswith("yield "):
+                if self.owner != client.id:
+                    return "ERR control=not_owner\r\n"
+                try:
+                    target = int(action[6:])
+                except ValueError:
+                    return "ERR control=bad_peer\r\n"
+                if target not in self.clients:
+                    return "ERR control=bad_peer\r\n"
+                self.set_owner(target)
+            else:
+                return "ERR control=bad_action\r\n"
+            return self.status(client)
+
+    # -- Custom BLE advertised name ----------------------------------------
+
+    def _read_name(self):
+        """Return (name, custom). Falls back to the built-in default."""
+        try:
+            with open(NAME_FILE, "rb") as fh:
+                raw = fh.read(NAME_MAX + 1)
+            if raw and b"\x00" not in raw and b"\n" not in raw:
+                name = raw.decode("utf-8")
+                if 1 <= len(raw) <= NAME_MAX and name.strip() == name:
+                    return name, True
+        except (OSError, UnicodeDecodeError):
+            pass
+        return ADV_NAME, False
+
+    def _name_valid(self, name):
+        """Mirror the firmware rule: 1-29 UTF-8 bytes, no control chars."""
+        try:
+            raw = name.encode("utf-8")
+        except UnicodeEncodeError:
+            return False
+        if not 1 <= len(raw) <= NAME_MAX:
+            return False
+        for ch in name:
+            o = ord(ch)
+            if o < 0x20 or o == 0x7F or 0x80 <= o <= 0x9F or o in (0x2028, 0x2029):
+                return False
+        return name.strip() == name
+
+    def _push_name(self, name):
+        """Tell linkr-ble to re-advertise with the new LocalName."""
+        payload = name.encode("utf-8")
+        with self.lock:
+            clients = [c for c in self.clients.values()
+                       if getattr(c, "transport", "") == "ble"]
+        for c in clients:
+            try:
+                c.send_frame(FRAME_NAME, payload)
+            except (OSError, AttributeError):
+                pass
+
+    def name_command(self, line):
+        """Handle `@n?`, `@n=<name>`, `@n default` (and @linkr spellings)."""
+        name, custom = self._read_name()
+        if line in ("@n?", "@name?", "@linkr name?"):
+            return "OK name=%s custom=%s\r\n" % (
+                name, "yes" if custom else "no")
+        if line in ("@n default", "@name default", "@linkr name default"):
+            try:
+                os.remove(NAME_FILE)
+            except OSError:
+                pass
+            self._push_name(ADV_NAME)
+            return "OK name=%s\r\n" % ADV_NAME
+        for prefix in ("@n=", "@name=", "@linkr name=",
+                       "@n ", "@name ", "@linkr name "):
+            if line.startswith(prefix):
+                value = line[len(prefix):]
+                if not self._name_valid(value):
+                    return "ERR name=invalid\r\n"
+                try:
+                    os.makedirs(os.path.dirname(NAME_FILE), exist_ok=True)
+                    with open(NAME_FILE, "wb") as fh:
+                        fh.write(value.encode("utf-8"))
+                        fh.flush()
+                        os.fsync(fh.fileno())
+                except OSError:
+                    return "ERR name=write-failed\r\n"
+                self._push_name(value)
+                return "OK name=%s\r\n" % value
+        return None
+
+    def handle_text(self, client, text):
+        line = text.strip()
+        if line.startswith("@control "):
+            return self.control(client, line[9:])
+        if line.startswith("@c "):
+            return self.control(client, line[3:])
+        if line in ("@control?", "@c?"):
+            return self.control(client, "?")
+        reply = self.name_command(line)
+        if reply is not None:
+            return reply
+        return "ERR control=bad_frame\r\n"
+
+    def handle_binary(self, client, data, bridge):
+        with self.lock:
+            now = time.monotonic()
+            # The BLE bridge is shared by every BLE host, so its "release"
+            # cannot be attributed to one session; always allow the next
+            # write to claim an idle console.  LAN clients keep release
+            # semantics because each WebSocket is one session.
+            shared_ble = getattr(client, "transport", "") == "ble"
+            if not self.owner:
+                # Nobody owns the console.  A session that has never used the
+                # control API gets it on its first keystroke; a session that
+                # explicitly released it does not, because release is release.
+                if not shared_ble and client.id in self.managed:
+                    log("serial write from %d dropped: released, owner=0" %
+                        client.id)
+                    return "ERR control=readonly\r\n"
+                self.set_owner(client.id)
+            elif self.owner != client.id:
+                # An owner that stopped writing is not stepping on anyone:
+                # the first keystroke from another session takes over.
+                if now - self.owner_active < OWNER_IDLE_SECONDS:
+                    log("serial write from %d dropped: owner=%d" %
+                        (client.id, self.owner))
+                    return "ERR control=readonly\r\n"
+                log("serial write from %d takes over idle owner %d" %
+                    (client.id, self.owner))
+                self.set_owner(client.id)
+            else:
+                self.owner_active = now
+        serial_writer.write(data)
+        return None
+
+    # -- Linkr Management Service commands (BLE) ---------------------------
+
+    def diagnostics(self):
+        """`@i?`: the same "@info <group> ..." collection the firmware sends."""
+        with self.lock:
+            peers = len(self.clients)
+            uptime_ms = int((time.monotonic() - self.started) * 1000)
+        connected, info = _wifi_status()
+        lines = [
+            "@info fw version=%s zephyr=4.5.0\r\n" % FIRMWARE_VERSION,
+            "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
+            "@info uart dropped=0 dropped_no_conn=0 buffer=0/4096\r\n",
+            "@info wifi state=%s ip=%s\r\n" % (
+                "connected" if connected else "off",
+                info["ip"] or "down"),
+            "@info upload %s\r\n" % self.webdav.counters(),
+            "@info ws state=%s port=%d clients=%d\r\n" % (
+                "on" if self.ws_enabled else "off", self.ws_port, peers),
+            "@info queue dropped=0\r\n",
+            "@info peer dropped=0\r\n",
+            "@info rel ind=0 retry=0 busy=0 nomem=0 slept_ms=0 "
+            "timeout=0 wait_max_ms=0\r\n",
+            "@info done\r\n",
+        ]
+        return "".join(lines)
+
+    def ws_status(self, client):
+        with self.lock:
+            peers = len(self.clients)
+        return ("OK ws=%s port=%d clients=%d token=%s\r\n" %
+                ("on" if self.ws_enabled else "off", self.ws_port, peers,
+                 self.ws_token or "none"))
+
+    def handle_command(self, client, text, reqid=0):
+        """Dispatch a Management Service command from the BLE bridge."""
+        line = text.strip()
+        # Accept the long "@linkr <verb>" spelling used by the firmware.
+        if line.startswith("@linkr "):
+            line = "@" + line[7:]
+        if line.startswith("@control "):
+            line = "@c " + line[9:]
+        if line in ("@c?", "@control?"):
+            return self.control(client, "?")
+        if line.startswith("@c "):
+            return self.control(client, line[3:])
+        if line in ("@i?", "@info?"):
+            return self.diagnostics()
+        reply = self._uart_command(line)
+        if reply is not None:
+            return reply
+
+        # ---- WiFi (@w / @linkr wifi) ----
+        if line in ("@w?", "@wifi?"):
+            return _wifi_status_line()
+        if line in ("@w off", "@wifi off"):
+            threading.Thread(target=self._wifi_off_thread,
+                             args=(client, reqid), daemon=True).start()
+            return "OK wifi off\r\n"
+        if line in ("@w scan", "@wifi scan"):
+            threading.Thread(target=self._wifi_scan_thread,
+                             args=(client, reqid), daemon=True).start()
+            return "OK scan=accepted\r\n"
+        for prefix in ("@w=", "@wifi="):
+            if line.startswith(prefix):
+                value = line[len(prefix):]
+                ssid, _sep, password = value.partition(",")
+                ssid = ssid.strip()
+                if not ssid:
+                    return "ERR format: @w=ssid,pass\r\n"
+                threading.Thread(target=self._wifi_connect_thread,
+                                 args=(client, reqid, ssid, password),
+                                 daemon=True).start()
+                return "OK wifi=accepted,ssid=%s\r\n" % ssid
+
+        reply = self.name_command(line)
+        if reply is not None:
+            return reply
+        reply = self._ws_command(line, client)
+        if reply is not None:
+            return reply
+        reply = self._webdav_command(line)
+        if reply is not None:
+            return reply
+        reply = self._bond_command(line)
+        if reply is not None:
+            return reply
+        reply = self._target_command(line)
+        if reply is not None:
+            return reply
+        if line in ("@h", "@help", "help", "h"):
+            return ("OK cmds: @c?|@c claim|@c claim idle|@c release|"
+                    "@c yield <peer> @i? @u? @n?|@n=<name>|@n default "
+                    "@w?|@w scan|@w=<ssid>,<pass>|@w off "
+                    "@s?|@s on|@s off|@s token|@s token=<hex>|@s token off "
+                    "@d?|@d=<url>[,<user>,<pass>]|@d off "
+                    "@u?|@u=<baud>,<data>,<n|e|o>,<1|2>,<n|rtscts> "
+                    "@linkr bonds?|bonds names?|bonds name <label>|"
+                    "bonds label <type>/<addr> [<hex>|clear]|"
+                    "bonds remove <type>/<addr> "
+                    "@linkr target?|target=<uuid>|target clear\r\n")
+        if line in ("@a?", "@autobaud?"):
+            return "OK autobaud state=idle baud=115200 timeout_ms=0\r\n"
+        return "ERR unknown command\r\n"
+
+    def broadcast(self, data):
+        with self.lock:
+            clients = list(self.clients.values())
+        for client in clients:
+            if client.opened and client.alive:
+                try:
+                    client.send_binary(data)
+                except OSError:
+                    client.alive = False
+
+
+# --------------------------------------------------------------------------
+# WebSocket client
+# --------------------------------------------------------------------------
+
+class Client:
+    def __init__(self, conn, addr, session):
+        self.conn = conn
+        self.addr = addr
+        self.session = session
+        self.id = 0
+        self.opened = False
+        self.alive = True
+        self.send_lock = threading.Lock()
+
+    def send_frame(self, opcode, payload):
+        header = bytes([0x80 | opcode])
+        length = len(payload)
+        if length < 126:
+            header += bytes([length])
+        elif length < 65536:
+            header += bytes([126]) + struct.pack("!H", length)
+        else:
+            header += bytes([127]) + struct.pack("!Q", length)
+        with self.send_lock:
+            self.conn.sendall(header + payload)
+
+    def send_text(self, text):
+        self.send_frame(0x1, text.encode("utf-8"))
+
+    def send_binary(self, data):
+        self.send_frame(0x2, data)
+
+    def run(self):
+        self.session.register(self)
+        log("ws client %d from %s:%d connected" % (self.id, self.addr[0], self.addr[1]))
+        try:
+            token = self.session.ws_token
+            if token:
+                self.send_text("@ws auth=required\r\n")
+                self.conn.settimeout(3.0)
+                opcode, data = ws_recv_message(self.conn)
+                supplied = data.decode("utf-8", "replace").strip().lower()
+                if opcode != 0x1 or supplied != token:
+                    log("ws client %d rejected: bad LAN token" % self.id)
+                    return
+                self.conn.settimeout(None)
+                self.send_text("@ws auth=ok\r\n")
+            else:
+                self.send_text("@ws auth=none\r\n")
+            self.send_text(self.session.status(self))
+            self.opened = True
+            while self.alive:
+                opcode, data = ws_recv_message(self.conn)
+                if opcode == 0x8:
+                    break
+                if opcode == 0x9:
+                    self.send_frame(0xA, data)
+                    continue
+                if opcode == 0xA:
+                    continue
+                if opcode == 0x1:
+                    reply = self.session.handle_text(self, data.decode("utf-8", "replace"))
+                    if reply:
+                        self.send_text(reply)
+                elif opcode == 0x2:
+                    reply = self.session.handle_binary(self, data, bridge)
+                    if reply:
+                        self.send_text(reply)
+        except (ConnectionError, OSError, ValueError) as exc:
+            log("ws client %d closed: %s" % (self.id, exc))
+        finally:
+            self.alive = False
+            self.session.unregister(self)
+            try:
+                self.conn.close()
+            except OSError:
+                pass
+            log("ws client %d disconnected" % self.id)
+
+
+# --------------------------------------------------------------------------
+# BLE bridge client (Unix socket from /usr/bin/linkr-ble)
+# --------------------------------------------------------------------------
+
+class BleClient:
+    """One connection from the A7 BLE GATT bridge process."""
+
+    def __init__(self, conn, session):
+        self.conn = conn
+        self.session = session
+        self.id = 0
+        self.alive = True
+        self.send_lock = threading.Lock()
+        self.transport = "ble"
+
+    @property
+    def opened(self):
+        return self.alive
+
+    def send_frame(self, ftype, payload):
+        header = bytes([ftype, len(payload) & 0xFF, (len(payload) >> 8) & 0xFF])
+        with self.send_lock:
+            self.conn.sendall(header + payload)
+
+    def send_binary(self, data):
+        self.send_frame(FRAME_DATA, data)
+
+    def send_ctl_rsp(self, reqid, text):
+        self.send_frame(FRAME_CTL_RSP, struct.pack("<I", reqid) +
+                        text.encode("utf-8"))
+
+    def send_event(self, reqid, flags, text):
+        """Async event (WiFi completion, scan results) for `reqid`."""
+        self.send_frame(FRAME_EVENT, struct.pack("<IH", reqid, flags) +
+                        text.encode("utf-8"))
+
+    def run(self):
+        self.session.register(self)
+        log("ble bridge %d connected" % self.id)
+        try:
+            while self.alive:
+                header = _recv_exact(self.conn, 3)
+                ftype = header[0]
+                length = header[1] | (header[2] << 8)
+                payload = _recv_exact(self.conn, length) if length else b""
+                if ftype == FRAME_DATA:
+                    log("ble bridge %d -> rpmsg %d bytes" % (self.id, len(payload)))
+                    self.session.handle_binary(self, payload, bridge)
+                elif ftype == FRAME_CTL_REQ and len(payload) >= 4:
+                    reqid = struct.unpack("<I", payload[:4])[0]
+                    text = payload[4:].decode("utf-8", "replace")
+                    reply = self.session.handle_command(self, text, reqid)
+                    self.send_ctl_rsp(reqid, reply or "ERR unknown command\r\n")
+                elif ftype == FRAME_HELLO:
+                    log("ble bridge %d hello: %s" % (self.id,
+                        payload.decode("utf-8", "replace")))
+                else:
+                    log("ble bridge %d unknown frame 0x%02x" % (self.id, ftype))
+        except (ConnectionError, OSError, ValueError) as exc:
+            log("ble bridge %d closed: %s" % (self.id, exc))
+        finally:
+            self.alive = False
+            self.session.unregister(self)
+            try:
+                self.conn.close()
+            except OSError:
+                pass
+            log("ble bridge %d disconnected" % self.id)
+
+
+# --------------------------------------------------------------------------
+# HTTP server
+# --------------------------------------------------------------------------
+
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".wasm": "application/wasm",
+    ".txt": "text/plain; charset=utf-8",
+    ".map": "application/json",
+}
+
+
+def _read_request(conn):
+    conn.settimeout(10.0)
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = conn.recv(4096)
+        if not chunk:
+            return None
+        data += chunk
+        if len(data) > 65536:
+            return None
+    head = data.split(b"\r\n\r\n", 1)[0].decode("latin-1")
+    lines = head.split("\r\n")
+    parts = lines[0].split()
+    if len(parts) < 2:
+        return None
+    headers = {}
+    for line in lines[1:]:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            headers[key.strip().lower()] = value.strip()
+    return parts[0].upper(), parts[1], headers
+
+
+def _http_response(conn, status, body, content_type, extra=""):
+    header = ("HTTP/1.1 %s\r\n"
+              "Content-Type: %s\r\n"
+              "Content-Length: %d\r\n"
+              "Connection: close\r\n"
+              "Cache-Control: no-cache\r\n"
+              "%s\r\n" % (status, content_type, len(body), extra))
+    conn.sendall(header.encode("latin-1") + body)
+
+
+def serve_file(conn, web_root, url_path):
+    path = urllib.parse.unquote(url_path.split("?")[0].split("#")[0])
+    if path in ("", "/"):
+        path = "/index.html"
+    if path.endswith("/"):
+        path += "index.html"
+
+    root = os.path.realpath(web_root)
+    full = os.path.realpath(os.path.join(root, path.lstrip("/")))
+    if full != root and not full.startswith(root + os.sep):
+        _http_response(conn, "403 Forbidden", b"forbidden\n", "text/plain")
+        return
+    if not os.path.isfile(full):
+        _http_response(conn, "404 Not Found", b"not found\n", "text/plain")
+        return
+
+    try:
+        with open(full, "rb") as fp:
+            body = fp.read()
+    except OSError:
+        _http_response(conn, "403 Forbidden", b"forbidden\n", "text/plain")
+        return
+
+    ext = os.path.splitext(full)[1].lower()
+    _http_response(conn, "200 OK", body, MIME.get(ext, "application/octet-stream"))
+
+
+def handle_connection(conn, addr, web_root, session, redirect_https=False):
+    try:
+        request = _read_request(conn)
+        if request is None:
+            return
+        _method, path, headers = request
+        route = path.split("?")[0]
+
+        # Web Bluetooth only exists in a secure context. Over plain HTTP
+        # navigator.bluetooth is undefined, so the client reports
+        # "Bluetooth LE transport is not available" without ever scanning.
+        # Redirect plain-HTTP page requests to the HTTPS listener.
+        #   - /ws stays on HTTP so existing LAN tooling keeps working.
+        #   - HTTPS connections are never redirected (no loop).
+        #   - A reverse proxy that already terminated TLS is left alone
+        #     (X-Forwarded-Proto: https), so an https://host:8443 entry
+        #     proxying to this port is not broken.
+        if (redirect_https and route != "/ws" and
+                headers.get("x-forwarded-proto", "").lower() != "https"):
+            host = headers.get("host", "")
+            if host.endswith(":80"):
+                host = host[:-3]
+            if not host:
+                host = addr[0]
+            location = "https://%s%s" % (host, path)
+            _http_response(conn, "301 Moved Permanently", b"",
+                           "text/plain; charset=utf-8",
+                           "Location: %s\r\n" % location)
+            return
+
+        if route == "/ws" and headers.get("upgrade", "").lower() == "websocket":
+            if not session.ws_enabled:
+                _http_response(conn, "503 Service Unavailable",
+                               b"LAN bridge disabled\n",
+                               "text/plain; charset=utf-8")
+                return
+            key = headers.get("sec-websocket-key", "")
+            accept = base64.b64encode(
+                hashlib.sha1((key + WS_GUID).encode("ascii")).digest()).decode("ascii")
+            conn.sendall(("HTTP/1.1 101 Switching Protocols\r\n"
+                          "Upgrade: websocket\r\n"
+                          "Connection: Upgrade\r\n"
+                          "Sec-WebSocket-Accept: %s\r\n\r\n" % accept).encode("ascii"))
+            conn.settimeout(None)
+            Client(conn, addr, session).run()
+        else:
+            serve_file(conn, web_root, path)
+    except (ConnectionError, OSError, ValueError) as exc:
+        log("http connection %s:%d failed: %s" % (addr[0], addr[1], exc))
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def serve_ble_socket(session):
+    """Accept connections from /usr/bin/linkr-ble over AF_UNIX."""
+    try:
+        os.unlink(BLE_SOCK_PATH)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        log("cannot remove %s: %s" % (BLE_SOCK_PATH, exc))
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        server.bind(BLE_SOCK_PATH)
+    except OSError as exc:
+        log("ble socket bind failed: %s" % exc)
+        return
+    os.chmod(BLE_SOCK_PATH, 0o600)
+    server.listen(4)
+    log("BLE bridge socket on %s" % BLE_SOCK_PATH)
+    while True:
+        try:
+            conn, _addr = server.accept()
+        except OSError as exc:
+            log("ble socket accept failed: %s" % exc)
+            time.sleep(0.5)
+            continue
+        threading.Thread(target=BleClient(conn, session).run, daemon=True).start()
+
+
+def serve_tls(bind, port, web_root, session, cert, key):
+    """HTTPS listener. Web Bluetooth needs a secure context, so the same
+    page is also served over TLS when a certificate is available."""
+    import ssl
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((bind, port))
+    server.listen(16)
+    log("Linkr Bee HTTPS bridge on %s:%d (cert %s)" % (bind, port, cert))
+    while True:
+        try:
+            conn, addr = server.accept()
+        except OSError as exc:
+            log("https accept failed: %s" % exc)
+            time.sleep(0.5)
+            continue
+        try:
+            conn = ctx.wrap_socket(conn, server_side=True)
+        except (ssl.SSLError, OSError) as exc:
+            log("https handshake from %s:%d failed: %s" % (addr[0], addr[1], exc))
+            try:
+                conn.close()
+            except OSError:
+                pass
+            continue
+        threading.Thread(target=handle_connection,
+                         args=(conn, addr, web_root, session),
+                         daemon=True).start()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Linkr Bee LAN bridge for V851S")
+    parser.add_argument("--port", type=int, default=80)
+    parser.add_argument("--tls-port", type=int, default=443)
+    parser.add_argument("--cert", default="/usr/share/linkr-bee/certs/linkr-bee.crt")
+    parser.add_argument("--key", default="/usr/share/linkr-bee/certs/linkr-bee.key")
+    parser.add_argument("--bind", default="0.0.0.0")
+    parser.add_argument("--web-root", default="/usr/share/linkr-bee/web")
+    parser.add_argument("--max-chunk", type=int, default=256,
+                        help="max bytes per rpmsg write (MTU-safe)")
+    args = parser.parse_args()
+
+    global bridge, serial_writer
+
+    session = Session()
+    session.ws_port = args.port
+    bridge = RpmsgBridge(session.on_bridge_data, max_chunk=args.max_chunk)
+    session.bridge = bridge
+    bridge.start()
+    session.webdav.start()
+
+    serial_writer = SerialWriter(bridge)
+    serial_writer.start()
+
+    threading.Thread(target=serve_ble_socket, args=(session,),
+                     name="ble-socket", daemon=True).start()
+
+    tls_enabled = (args.tls_port > 0 and os.path.isfile(args.cert)
+                   and os.path.isfile(args.key))
+    if tls_enabled:
+        threading.Thread(target=serve_tls,
+                         args=(args.bind, args.tls_port, args.web_root,
+                               session, args.cert, args.key),
+                         name="https", daemon=True).start()
+    else:
+        log("HTTPS disabled (missing %s or %s)" % (args.cert, args.key))
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((args.bind, args.port))
+    server.listen(16)
+    log("Linkr Bee LAN bridge on %s:%d, web root %s" %
+        (args.bind, args.port, args.web_root))
+
+    while True:
+        conn, addr = server.accept()
+        try:
+            conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO,
+                            struct.pack("ll", 10, 0))
+        except OSError:
+            pass
+        threading.Thread(target=handle_connection,
+                         args=(conn, addr, args.web_root, session, tls_enabled),
+                         daemon=True).start()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass

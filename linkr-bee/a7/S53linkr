@@ -1,0 +1,69 @@
+#!/bin/sh
+# Linkr Bee LAN bridge (A7 side).
+#
+# Serves the Linkr Bee web terminal on port 80 and bridges ws://<board>/ws to
+# the E907 UART3 link over /dev/rpmsg_ctrl0.  See linkr-bee-daemon.
+#
+# The daemon binds 0.0.0.0, so it can start before Wi-Fi has an address; the
+# page simply becomes reachable once wlan0 gets an IP.
+
+DAEMON=/usr/bin/linkr-bee-daemon
+WEBROOT=/usr/share/linkr-bee/web
+PIDFILE=/var/run/linkr-bee.pid
+LOGFILE=/var/log/linkr-bee.log
+PORT=80
+
+start() {
+	mkdir -p /var/run
+	[ -x "$DAEMON" ] || { echo "linkr-bee: $DAEMON missing"; return 1; }
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "linkr-bee: already running (pid $(cat "$PIDFILE"))"
+		return 0
+	fi
+	echo -n "Starting linkr-bee: "
+	nohup python3 -u "$DAEMON" --port "$PORT" --tls-port 0 \
+		--web-root "$WEBROOT" >>"$LOGFILE" 2>&1 &
+	echo $! >"$PIDFILE"
+	sleep 1
+	if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "ok (pid $(cat "$PIDFILE"), port $PORT)"
+	else
+		echo "failed, see $LOGFILE"
+		rm -f "$PIDFILE"
+		return 1
+	fi
+}
+
+stop() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo -n "Stopping linkr-bee: "
+		kill "$(cat "$PIDFILE")" 2>/dev/null
+		for _ in 1 2 3; do
+			sleep 1
+			kill -0 "$(cat "$PIDFILE")" 2>/dev/null || break
+		done
+		kill -9 "$(cat "$PIDFILE")" 2>/dev/null
+		rm -f "$PIDFILE"
+		echo "done"
+	else
+		echo "linkr-bee: not running"
+		rm -f "$PIDFILE"
+	fi
+}
+
+status() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "linkr-bee: running (pid $(cat "$PIDFILE"), port $PORT)"
+	else
+		echo "linkr-bee: stopped"
+		return 1
+	fi
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	status) status ;;
+	*) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

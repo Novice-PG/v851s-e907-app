@@ -1,0 +1,18 @@
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = Linkr Bee V851S
+O = Linkr Bee
+[v3]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt
+[alt]
+DNS.1 = linkr-bee.local
+DNS.2 = localhost
+IP.1 = 127.0.0.1
+IP.2 = 192.168.45.233
+IP.3 = 192.168.0.190

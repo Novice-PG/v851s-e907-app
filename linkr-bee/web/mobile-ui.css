@@ -1,0 +1,286 @@
+/* Compact controls share the terminal's existing palette and button vocabulary. */
+:root { --mobile-control-surface: #111822; }
+[data-theme="light"] { --mobile-control-surface: #fff; }
+.terminal-keys-toggle,
+.terminal-keys-customize { display: none; }
+
+.agent-advanced-settings {
+  margin: 14px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.agent-advanced-settings > summary {
+  padding: 14px 0;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.agent-advanced-fields { padding-bottom: 6px; }
+.agent-settings-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  padding: 10px 0 2px;
+  background: var(--mobile-control-surface);
+  border-top: 1px solid var(--line);
+}
+.agent-settings-actions .field-hint:empty { display: none; }
+.agent-settings-actions .field-hint { margin-bottom: 4px; }
+.agent-settings-actions .btn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+.terminal-key-preferences {
+  width: min(460px, calc(100vw - 24px));
+  max-height: calc(var(--terminal-viewport-height, 100vh) - 32px);
+  box-sizing: border-box;
+  padding: 20px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--mobile-control-surface);
+  color: var(--text);
+}
+.terminal-key-preferences::backdrop { background: rgba(0, 0, 0, .5); }
+.terminal-key-preferences h2 { margin: 0; font-size: 18px; }
+.terminal-key-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  margin-block: 16px;
+}
+.terminal-key-choices .check { min-height: 48px; padding: 4px; margin: 0; overflow-wrap: anywhere; }
+.terminal-key-choices input { flex: 0 0 auto; }
+.terminal-key-preferences-actions {
+  position: sticky;
+  bottom: -20px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding-block: 12px;
+  background: var(--mobile-control-surface);
+}
+.terminal-key-preferences-actions .btn { min-height: 48px; }
+.terminal-key-preferences :focus-visible,
+.agent-advanced-settings > summary:focus-visible,
+.terminal-keys-customize:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+@media (max-width: 900px) {
+  #agentSettingsForm {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .agent-settings-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior-y: auto; padding-right: 3px; }
+  html.soft-keyboard-open .app-shell.sidebar-open .controls .settings-tabs { display: none; }
+  .terminal-card .terminal-input-bar { flex-direction: column; align-items: stretch; gap: 0; }
+  .terminal-card .terminal-input-actions { align-items: flex-start; gap: 5px; }
+  .terminal-key-scroll { gap: 5px; padding-bottom: 2px; }
+  .terminal-key-scroll .terminal-key-group { display: contents; }
+  .terminal-key-scroll button { order: var(--favorite-key-order, 100); }
+  .terminal-input-actions:not(.keys-expanded) .terminal-key-scroll button:not([data-favorite-key]) { display: none; }
+  /* The default eight favourites do not fit beside the pinned Ctrl-C and More
+   * at 390px. Let the favourite row wrap instead of clipping the fifth key;
+   * the expanded grid keeps its two scrollable rows. */
+  .terminal-input-actions:not(.keys-expanded) .terminal-key-scroll {
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 64px));
+    grid-auto-rows: 48px;
+    align-content: flex-start;
+    justify-content: center;
+    gap: 4px;
+    overflow-x: visible;
+    padding-right: 0;
+    border-right: 0;
+  }
+  .terminal-card .terminal-key,
+  .terminal-card .terminal-keyboard,
+  .terminal-card #breakButton { min-height: 48px; height: 48px; min-width: 48px; padding-inline: 10px; }
+  .terminal-card #breakButton { min-width: 58px; }
+  .terminal-card .terminal-keys-toggle { display: inline-flex; flex: 0 0 auto; font-family: inherit; }
+
+  /* Four favourites per row at phone widths: eight defaults form a complete
+   * 2x4 grid, with no half-key and no horizontal scroll. Tablets keep one row
+   * of eight capped at 64px so keys do not balloon. */
+  @media (max-width: 600px) {
+    .terminal-input-actions:not(.keys-expanded) .terminal-key-scroll {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 380px) {
+    .terminal-card .terminal-key,
+    .terminal-card .terminal-keyboard,
+    .terminal-card #breakButton {
+      min-width: 44px;
+      padding-inline: 6px;
+    }
+  }
+
+  /* At 320px four 44px keys plus the pinned Ctrl-C/More cannot fit in one
+   * row; use three columns (three short rows) instead of shrinking targets. */
+  @media (max-width: 340px) {
+    .terminal-input-actions:not(.keys-expanded) .terminal-key-scroll {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+  .terminal-keys-customize:not([hidden]) {
+    display: block;
+    min-height: 44px;
+    margin-left: auto;
+    padding: 6px 4px;
+    color: var(--accent-strong);
+    font: inherit;
+    font-size: 12px;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .terminal-input-bar:has(.keys-expanded) { max-height: 45%; overflow-y: auto; }
+  .keys-expanded .terminal-key-scroll {
+    display: grid;
+    grid-template-rows: repeat(2, 48px);
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+  }
+  .terminal-card .terminal-input-hint { display: none; }
+  .agent-advanced-settings > summary { min-height: 48px; box-sizing: border-box; }
+}
+
+/* The phone drawer is full width and carries the status/navigation insets, so
+ * the form height budget from the 190 px constant is too generous there: the
+ * pinned Save/Clear row ended up below the drawer viewport and looked missing.
+ * Subtract the real insets on a phone; the keyboard-open rule above already
+ * sizes the form against the reduced viewport. */
+@media (max-width: 600px) {
+  html:not(.soft-keyboard-open) #agentSettingsForm {
+    max-height: calc(var(--terminal-viewport-height, 100dvh) - 190px - var(--safe-top) - var(--safe-bottom));
+  }
+}
+
+@media (min-width: 360px) {
+  .terminal-key-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; }
+}
+
+/* Hide redundant rows in the short viewport without hiding connection actions. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .terminal-card .presets,
+  .terminal-card .terminal-input-hint,
+  .term-tools .term-hint { display: none; }
+  .topbar { padding-block: 4px; }
+  .terminal-head { padding-block: 2px; }
+  .statusbar { padding-block: 0; }
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  /* A small visible dot with a larger hit target, centered on the same cell. */
+  .terminal-selection-handle { width: 48px; height: 48px; border: 0; background: transparent; box-shadow: none; }
+  .terminal-selection-handle::before {
+    content: "";
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 2px solid var(--panel);
+    border-radius: 50%;
+    background: var(--accent-strong);
+  }
+  .terminal-selection-handle-start::after { top: calc(50% + 10px); }
+  .terminal-selection-handle-end::after { bottom: calc(50% + 10px); }
+}
+
+/* ---------- MCP server (Android app only) ---------- */
+/* .field-hint sets display:block, which defeats the hidden attribute. */
+.mcp-settings [hidden] { display: none; }
+/* The MCP card lives inside the AI card's scroll, not in a second page scroll.
+ * Keep the same vertical rhythm the old .agent-settings-scroll provided. */
+.mcp-settings-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  align-content: start;
+  gap: 10px;
+}
+.mcp-settings-body > * { min-width: 0; max-width: 100%; }
+.mcp-settings .field { margin-bottom: 0; }
+/* The no-confirmation access mode is a security decision: make it visibly red. */
+.mcp-settings select.is-danger { color: var(--danger); border-color: var(--danger); }
+.mcp-settings .password-row { display: flex; align-items: center; gap: 6px; }
+.mcp-settings .password-row input { flex: 1 1 auto; min-width: 0; }
+.mcp-settings .password-row .btn { flex: 0 0 auto; }
+.mcp-settings .mcp-warning { color: var(--danger); }
+.mcp-settings .mcp-snippet {
+  margin: 8px 0 0;
+  padding: 10px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.mcp-settings .mcp-client-config,
+.mcp-settings .mcp-audit { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.mcp-settings .mcp-client-config > summary,
+.mcp-settings .mcp-audit > summary { cursor: pointer; font-size: 12px; font-weight: 600; }
+.mcp-settings .mcp-audit-list { max-height: 220px; overflow-y: auto; }
+.mcp-settings .mcp-audit-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.mcp-settings .mcp-audit-row:last-child { border-bottom: 0; }
+.mcp-settings .mcp-audit-head { margin: 0; font-size: 12px; font-weight: 600; }
+.mcp-settings .mcp-audit-row .field-hint { margin: 2px 0 0; }
+
+/* Approval is requested by an external client, so it must stay reachable no
+ * matter which settings tab or terminal view the user has open. The terminal's
+ * fullscreen fallback paints at z-index 1000 (web/style.css); the banner must
+ * be above it or an external write looks like it silently timed out. */
+.mcp-approval {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, var(--safe-bottom));
+  z-index: 1100;
+  width: min(92vw, 460px);
+  transform: translateX(-50%);
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+/* Real fullscreen only paints descendants of the fullscreen element; mcp_ui.js
+ * moves the banner inside that element while it is open. Keep the layer above
+ * the terminal content in both cases. */
+:fullscreen .mcp-approval { z-index: 1100; }
+.mcp-approval[hidden] { display: none; }
+.mcp-approval-title { margin: 0 0 4px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.mcp-approval-tool { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.mcp-approval-args-label { margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+.mcp-approval-args {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (pointer: coarse), (max-width: 900px) {
+  .mcp-settings .password-row { flex-wrap: wrap; }
+  .mcp-approval { width: calc(100vw - 24px); }
+}
+
+/* Import shares the existing settings controls and scroll area. */
+.cliproxy-import { margin-bottom: 14px; }
+.cliproxy-import [hidden] { display: none; }
+.cliproxy-import .btn { width: 100%; margin-top: 8px; white-space: normal; }
+.cliproxy-import select { width: 100%; min-width: 0; text-overflow: ellipsis; }
+.cliproxy-import #cliproxyStatus:empty { display: none; }

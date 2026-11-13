@@ -1,0 +1,107 @@
+#!/bin/sh
+#
+# Linkr Bee bridge for the V851S:
+#   linkr-bee-daemon  HTTP/WebSocket + rpmsg endpoint (A7 <-> E907 UART3)
+#   linkr-ble         BlueZ GATT server (NUS + Linkr Management + Reliable UART)
+#
+# Requires /dev/rpmsg_ctrl0 (E907 firmware running) and the web assets in
+# /usr/share/linkr-bee/web.
+
+NAME=linkr-bee
+DAEMON=/usr/bin/linkr-bee-daemon
+BLE=/usr/bin/linkr-ble
+WEBROOT=/usr/share/linkr-bee/web
+PIDFILE=/var/run/$NAME.pid
+BLE_PIDFILE=/var/run/$NAME-ble.pid
+LOGFILE=/var/log/$NAME.log
+BLE_LOGFILE=/var/log/$NAME-ble.log
+
+is_running() {
+	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+ble_is_running() {
+	[ -f "$BLE_PIDFILE" ] && kill -0 "$(cat "$BLE_PIDFILE")" 2>/dev/null
+}
+
+start() {
+	printf "Starting %s: " "$NAME"
+	if is_running; then
+		echo "already running"
+		return 0
+	fi
+	mkdir -p /var/run /var/log
+	/usr/bin/python3 "$DAEMON" --port 80 --web-root "$WEBROOT" \
+		>>"$LOGFILE" 2>&1 &
+	echo $! >"$PIDFILE"
+	echo "ok"
+
+	# The GATT bridge needs the system bus and a powered adapter. bluetoothd
+	# normally starts from /etc/init.d/bluetooth; give it a moment if this
+	# script wins the race at boot.
+	i=0
+	while [ $i -lt 20 ] && ! hciconfig hci0 2>/dev/null | grep -q "UP RUNNING"; do
+		[ $i -eq 0 ] && [ -x /etc/init.d/S52bluetooth ] && \
+			/etc/init.d/S52bluetooth start >/dev/null 2>&1
+		i=$((i + 1))
+		sleep 1
+	done
+
+	# BlueZ 5.54 / this kernel default to a 1280 ms advertising interval,
+	# which is far slower than the upstream firmware's fast advertising and
+	# makes a Web Bluetooth chooser's short scan window miss the board.
+	# The mgmt defaults live in debugfs and are read each time an
+	# advertisement is registered. The files only appear after hci0 is fully
+	# registered, so this must run HERE (after the UP RUNNING loop above and
+	# before linkr-ble registers its advertisement), not in S52bluetooth --
+	# writing there at boot is silently dropped because hci0 is not ready yet.
+	ADV=/sys/kernel/debug/bluetooth/hci0
+	j=0
+	while [ $j -lt 10 ] && [ ! -w "$ADV/adv_min_interval" ]; do
+		j=$((j + 1))
+		sleep 1
+	done
+	if [ -w "$ADV/adv_min_interval" ]; then
+		echo 48 > "$ADV/adv_min_interval"     # 30 ms
+		echo 96 > "$ADV/adv_max_interval"     # 60 ms
+	else
+		echo "warning: adv interval debugfs not writable, keeping default"
+	fi
+
+	if [ -x "$BLE" ]; then
+		printf "Starting %s-ble: " "$NAME"
+		"$BLE" >>"$BLE_LOGFILE" 2>&1 &
+		echo $! >"$BLE_PIDFILE"
+		echo "ok"
+	fi
+}
+
+stop() {
+	printf "Stopping %s-ble: " "$NAME"
+	if ble_is_running; then
+		kill "$(cat "$BLE_PIDFILE")" 2>/dev/null
+		rm -f "$BLE_PIDFILE"
+		echo "ok"
+	else
+		rm -f "$BLE_PIDFILE"
+		echo "not running"
+	fi
+
+	printf "Stopping %s: " "$NAME"
+	if is_running; then
+		kill "$(cat "$PIDFILE")" 2>/dev/null
+		rm -f "$PIDFILE"
+		echo "ok"
+	else
+		rm -f "$PIDFILE"
+		echo "not running"
+	fi
+	rm -f /var/run/linkr-bee.sock
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; sleep 1; start ;;
+	*) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

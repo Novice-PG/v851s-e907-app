@@ -1,0 +1,12 @@
+# build outputs
+build/
+build-*/
+*.o
+*.d
+
+# generated per board, never committed
+linkr-bee/a7/certs/*.key
+linkr-bee/a7/certs/*.crt
+*.orig
+*.rej
+__pycache__/

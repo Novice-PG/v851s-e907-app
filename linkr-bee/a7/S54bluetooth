@@ -1,0 +1,275 @@
+#!/bin/sh
+# XR829 Bluetooth + Linkr Bee BLE peripheral (A7 side).
+#
+# Topology (see hardware schematic):
+#   XR829 BT UART  <-> /dev/ttyS2 (PD18/PD19, RTS/CTS PD20/PD21)
+#   BT_RSTN        -> PE8 (gpio-136, driven by the sunxi-bt driver)
+#   firmware       -> /lib/firmware/fw_xr829_bt.bin
+#
+# Order matters:
+#   1. D-Bus system bus (bluetoothd needs it)
+#   2. hciattach must run after the shared XR829 Wi-Fi firmware has been
+#      loaded (wlan0 netdev exists): loading it resets the whole chip and
+#      removes hci0, so an early attach is wasted work. Association and
+#      DHCP are not required.
+#   3. hciattach must be restarted from a clean state; a half-open attach
+#      leaves HCI_RUNNING set and every later frame fails with -49.
+#   4. Do NOT touch /sys/class/rfkill: the sunxi-bt driver has inverted
+#      set_block() logic and an extra "unblock" write right before
+#      hciattach leaves the BT core in a state where the firmware handshake
+#      times out. hciattach's own power sequencing is enough.
+#   5. bluetoothd must start after hci0 exists so it creates the LE GATT
+#      database (we rebuilt bluetoothd without the vendor patch that
+#      disabled it).
+#   6. linkr-ble registers the NUS / Management / Reliable UART services
+#      and pushes the advertising data the 4.9 kernel drops.
+#
+# A failed attach leaves the BT core needing minutes to recover, so retries
+# are spaced far apart instead of hammering the chip.
+
+HCIATTACH=/usr/bin/hciattach
+HCICONFIG=/usr/bin/hciconfig
+BLUETOOTHD=/usr/bin/bluetoothd
+LINKRBLE=/usr/bin/linkr-ble
+TTY=/dev/ttyS2
+MAINCONF=/etc/bluetooth/main.conf
+BOOTLOG=/var/log/bluetooth-init.log
+LOCK=/var/run/bluetooth-init.pid
+RETRY_GAP=180
+
+say() {
+	echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >>"$BOOTLOG"
+}
+
+start_dbus() {
+	mkdir -p /var/run/dbus /var/lib/dbus /var/lib/bluetooth
+	dbus-uuidgen --ensure 2>/dev/null
+	if ! pidof dbus-daemon >/dev/null 2>&1; then
+		dbus-daemon --system --fork 2>/dev/null
+	fi
+
+	# /var lives on tmpfs, so bonds/LTKs would be lost on every reboot.
+	# Bind BlueZ storage onto UDISK, but only once (S30persist has already
+	# mounted it by the time we run).
+	PERSIST=/mnt/UDISK/persist/bluetooth
+	if grep -q ' /mnt/UDISK ' /proc/mounts 2>/dev/null &&
+	   ! grep -qE ' (/var|/tmp)/lib/bluetooth ' /proc/mounts; then
+		mkdir -p "$PERSIST" 2>/dev/null
+		mount -o bind "$PERSIST" /var/lib/bluetooth 2>/dev/null
+	fi
+
+	i=0
+	while [ $i -lt 10 ]; do
+		[ -S /var/run/dbus/system_bus_socket ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	say "dbus socket not ready"
+	return 1
+}
+
+try_attach() {
+	# Never reuse a half-open attach: the kernel keeps HCI_RUNNING set.
+	killall hciattach 2>/dev/null
+	sleep 1
+
+	# Run hciattach under a pty: its stdout is line-buffered there, so a
+	# failure leaves the whole xradio_init trace in the log instead of just
+	# the first line (block buffering loses it if the process dies early).
+	if [ -f /var/log/hciattach.log ] &&
+	   [ "$(wc -c </var/log/hciattach.log)" -gt 65536 ]; then
+		mv /var/log/hciattach.log /var/log/hciattach.log.old
+	fi
+	echo "=== attempt $1 $(date) uptime=$(cut -d' ' -f1 /proc/uptime) ===" >>/var/log/hciattach.log
+
+	# A healthy attach takes ~11 s. A cold XR829 sometimes accepts the
+	# UART sync and the baudrate switch but then never ACKs the first
+	# firmware block, so hciattach blocks in userial_read() forever.
+	# Cap the attempt. `script` gives hciattach a pty so its stdout is
+	# line-buffered; run it in a subshell so an exec failure is logged.
+	(
+		exec /usr/bin/timeout 35 /usr/bin/script -q -a \
+			-c "$HCIATTACH -n $TTY xradio" /var/log/hciattach.log
+	) </dev/null 2>>/var/log/hciattach.log &
+	pid=$!
+	i=0
+	while [ $i -lt 45 ]; do
+		if [ -d /sys/class/bluetooth/hci0 ]; then
+			$HCICONFIG hci0 up 2>/dev/null
+			# hciattach must stay alive to keep hci0 registered.
+			if ! kill -0 $pid 2>/dev/null; then
+				say "hci0 vanished right after attach"
+				return 1
+			fi
+			return 0
+		fi
+		kill -0 $pid 2>/dev/null || break
+		sleep 1
+		i=$((i + 1))
+	done
+	echo "--- attempt $1 exit uptime=$(cut -d' ' -f1 /proc/uptime) alive=$(kill -0 $pid 2>/dev/null && echo yes || echo no)" >>/var/log/hciattach.log
+	kill $pid 2>/dev/null
+	killall hciattach 2>/dev/null
+	sleep 1
+	return 1
+}
+
+start_services() {
+	# Make sure EATT stays off: the 4.9 kernel has no EATT PSM support and
+	# bluetoothd would fail to create its sockets with the default of 3.
+	if [ -f "$MAINCONF" ]; then
+		sed -i 's/^#*Channels *= *[0-9]*/Channels = 1/' "$MAINCONF"
+	fi
+
+	killall bluetoothd 2>/dev/null
+	sleep 1
+	$BLUETOOTHD -n >/var/log/bluetoothd.log 2>&1 &
+	i=0
+	while [ $i -lt 15 ]; do
+		pidof bluetoothd >/dev/null 2>&1 && break
+		sleep 1
+		i=$((i + 1))
+	done
+	sleep 2
+
+	if [ -x "$LINKRBLE" ]; then
+		killall linkr-ble 2>/dev/null
+		sleep 1
+		$LINKRBLE >/var/log/linkr-ble.log 2>&1 &
+		sleep 2
+	fi
+
+	le_only
+}
+
+# The XR829 is dual-mode, and BlueZ leaves the BR/EDR page and inquiry scans
+# on.  Hosts then cache the board as a classic device and some pick BR/EDR
+# when connecting to a GATT service, failing with
+# br-connection-profile-unavailable.  The board only offers LE GATT; turn the
+# classic scans off so every host connects over LE.
+le_only() {
+	if [ -x "$HCICONFIG" ]; then
+		$HCICONFIG hci0 noscan 2>/dev/null
+	fi
+}
+
+wait_for_wifi() {
+	# Only wait for the netdev: its registration means the shared XR829
+	# Wi-Fi firmware has been loaded and the chip is powered. Association
+	# and DHCP turned out to be unrelated (attach works with wlan0
+	# associated, dissociated or down).
+	i=0
+	while [ $i -lt 20 ]; do
+		ip link show wlan0 >/dev/null 2>&1 && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	say "wlan0 did not appear after 20 s"
+	return 0
+}
+
+bring_up() {
+	trap 'rm -f $LOCK' EXIT
+	# A plain `trap ... TERM` would swallow SIGTERM: the handler would
+	# run and the loop would keep retrying, so `stop` left a second
+	# bring_up alive that then killed the next instance's hciattach.
+	trap 'exit 0' INT TERM
+	start_dbus || return 1
+
+	[ -c "$TTY" ] || { say "$TTY missing (uart2 disabled?)"; return 1; }
+
+	wait_for_wifi
+	# Let the first post-association scan burst finish before we touch the
+	# shared XR829 BT side.
+	sleep 5
+
+	# On a cold boot the XR829 BT ROM sometimes stalls during the firmware
+	# download and starts working a few minutes later; retry quickly at
+	# first, then back off. No power cycle is needed to recover.
+	n=1
+	while [ $n -le 40 ]; do
+		if try_attach $n; then
+			say "hci0 ready on attempt $n"
+			start_services
+			say "bluetooth ready"
+			return 0
+		fi
+		say "hciattach attempt $n failed"
+		n=$((n + 1))
+		case $n in
+			2|3) gap=15 ;;
+			4|5) gap=30 ;;
+			6|7) gap=60 ;;
+			8|9|10) gap=120 ;;
+			*) gap=$RETRY_GAP ;;
+		esac
+		sleep $gap
+	done
+	say "hci0 did not appear (see /var/log/hciattach.log)"
+	return 1
+}
+
+start() {
+	printf "Starting bluetooth: "
+	if [ -d /sys/class/bluetooth/hci0 ]; then
+		if pidof bluetoothd >/dev/null 2>&1; then
+			le_only
+			echo "already running"
+			return 0
+		fi
+		# hci0 was attached by hand; do not kill it, just bring the
+		# userspace side up.
+		( start_services ) >/dev/null 2>&1 &
+		echo "hci0 already present, starting services"
+		return 0
+	fi
+	if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null; then
+		echo "already bringing up (pid $(cat "$LOCK"))"
+		return 0
+	fi
+	( bring_up ) >/dev/null 2>&1 &
+	echo $! >"$LOCK"
+	echo "deferred to background (waits for wlan0, then attaches)"
+}
+
+stop() {
+	printf "Stopping bluetooth: "
+	if [ -f "$LOCK" ]; then
+		pid=$(cat "$LOCK" 2>/dev/null)
+		kill "$pid" 2>/dev/null
+		i=0
+		while [ $i -lt 3 ] && kill -0 "$pid" 2>/dev/null; do
+			sleep 1
+			i=$((i + 1))
+		done
+		kill -9 "$pid" 2>/dev/null
+	fi
+	rm -f "$LOCK"
+	killall linkr-ble 2>/dev/null
+	killall bluetoothd 2>/dev/null
+	$HCICONFIG hci0 down 2>/dev/null
+	killall hciattach 2>/dev/null
+	echo "done"
+}
+
+status() {
+	if [ -d /sys/class/bluetooth/hci0 ] && pidof bluetoothd >/dev/null 2>&1; then
+		echo "bluetooth: hci0 up, bluetoothd running" \
+		     "$(pidof linkr-ble >/dev/null 2>&1 && echo '(linkr-ble running)' || echo '(linkr-ble stopped)')"
+		return 0
+	fi
+	if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null; then
+		echo "bluetooth: bring-up in progress"
+		return 1
+	fi
+	echo "bluetooth: stopped"
+	return 1
+}
+
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	status) status ;;
+	*) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac

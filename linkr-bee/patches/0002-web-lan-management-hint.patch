@@ -1,0 +1,67 @@
+--- a/web/index.html
++++ b/web/index.html
+@@ -35,9 +35,9 @@
+     </script>
+     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+     <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
+-    <link rel="stylesheet" href="./style.css?v=20261030-full-labels" />
++    <link rel="stylesheet" href="./style.css?v=20261102-cli" />
+     <link rel="stylesheet" href="./window.css?v=20261026-safearea3" />
+-    <link rel="stylesheet" href="./skin-v2.css?v=20261030-full-labels" />
++    <link rel="stylesheet" href="./skin-v2.css?v=20261102-cli" />
+     <link rel="stylesheet" href="./mobile-ui.css?v=20261029-layout" />
+     <link rel="stylesheet" href="./form_controls.css?v=20261029" />
+     <link rel="stylesheet" href="./ble_guidance.css?v=20261029" />
+@@ -400,6 +400,7 @@
+ 
+         <section id="wifiWebdavCard" class="card" data-i18n-aria="wifiWebdavAria" aria-label="WiFi and WebDAV" data-settings-page="network">
+           <div class="card-title"><span class="dot"></span><span id="wifiWebdavTitle" data-i18n="wifiWebdav">WiFi &amp; WebDAV</span></div>
++          <p id="managementBleOnly" class="field-hint" role="note" data-i18n="managementBleOnly" hidden>WiFi and WebDAV settings use the BLE management channel. Connect over BLE to change them.</p>
+           <div id="wifiBlock">
+           <div id="wifiConnectedSummary" class="wifi-connected-summary" hidden>
+             <div class="wifi-connected-network">
+@@ -921,7 +922,7 @@
+     <script src="./vendor/xterm/xterm.js"></script>
+     <script src="./vendor/addon-fit/addon-fit.js"></script>
+     <script type="module" src="./ble_transport.js?v=20260901-mobile1"></script>
+-    <script type="module" src="./app.js?v=20261030-full-labels"></script>
++    <script type="module" src="./app.js?v=20261113-lan-hint"></script>
+     <script type="module" src="./ble_guidance.js?v=20261029"></script>
+     <script type="module" src="./rail_nav.js?v=20261017-v2"></script>
+     <script>
+--- a/web/app.js
++++ b/web/app.js
+@@ -427,6 +427,7 @@
+   wifiPasswordToggle: $("wifiPasswordToggle"),
+   wifiNetworkList: $("wifiNetworkList"),
+   wifiFeedback: $("wifiFeedback"),
++  managementBleOnly: $("managementBleOnly"),
+   wifiConnectedSummary: $("wifiConnectedSummary"),
+   wifiConnectedSsid: $("wifiConnectedSsid"),
+   wifiDeviceIp: $("wifiDeviceIp"),
+@@ -741,6 +742,7 @@
+     showPassword: "Show password",
+     hidePassword: "Hide password",
+     wifiScanHint: "Scan to select a nearby 2.4 GHz network.",
++    managementBleOnly: "WiFi and WebDAV settings use the BLE management channel. Connect over BLE to change them.",
+     wifiSelectHint: "Select a network or enter its SSID.",
+     wifiMissingSsid: "Enter or select a network name.",
+     connectedNetwork: "Connected network",
+@@ -1064,6 +1066,7 @@
+     showPassword: "显示密码",
+     hidePassword: "隐藏密码",
+     wifiScanHint: "扫描并选择附近的 2.4 GHz 网络。",
++    managementBleOnly: "WiFi 与 WebDAV 设置通过 BLE 管理通道下发，请改用 BLE 连接后修改。",
+     wifiSelectHint: "选择一个网络，或手动输入 SSID。",
+     wifiMissingSsid: "请输入或选择网络名称。",
+     connectedNetwork: "当前网络",
+@@ -2492,6 +2495,9 @@
+   elements.webdavSetButton.disabled = !management || !hasManagementCapability(MGMT_CAP_WEBDAV);
+   elements.webdavOffButton.disabled = elements.webdavSetButton.disabled;
+   elements.webdavQueryButton.disabled = !management || !hasManagementCapability(MGMT_CAP_WEBDAV);
++  /* On the LAN transport the management service is not carried, so these
++   * forms stay disabled; say why instead of leaving dead controls. */
++  if (elements.managementBleOnly) elements.managementBleOnly.hidden = state.mode !== "ws";
+   updateBleNameControls();
+   document.querySelectorAll("#cheatList button[data-cmd], #presets button, .presets button")
+     .forEach(item => { item.disabled = !writable; });

@@ -1,0 +1,48 @@
+v851s-e907-app
+==============
+
+Original work in this repository
+--------------------------------
+
+  src/, prj.conf, CMakeLists.txt   E907 Zephyr application
+  tools/                           rpmsg test and benchmark
+  linkr-bee/a7/linkr_ble.c         BlueZ GATT server (source)
+  linkr-bee/a7/linkr-bee-daemon    A7 Python bridge (source)
+  linkr-bee/a7/S53linkr,
+  linkr-bee/a7/S54bluetooth        init scripts
+  linkr-bee/a7/main.conf,
+  linkr-bee/a7/ble-adv-data.py,
+  linkr-bee/a7/certs/san.cnf       board configuration and helpers
+
+  Copyright (c) 2026 Abduwaris Nurmemet <daabu@qq.com>
+  SPDX-License-Identifier: Apache-2.0 (see LICENSE)
+
+Third-party components
+----------------------
+
+  linkr-bee/web/, linkr-bee/snapshot/web/, linkr-bee/patches/
+      Derived from radxa/linkr-bee (https://github.com/radxa/linkr-bee),
+      Apache-2.0. Baseline commit d9b2e00. See linkr-bee/LICENSE.
+
+  linkr-bee/web/vendor/xterm, vendor/addon-fit
+      @xterm/xterm and @xterm/addon-fit, MIT. Licenses alongside the files.
+
+  linkr-bee/web/vendor/marked           MIT
+  linkr-bee/web/vendor/dompurify        Apache-2.0 OR MPL-2.0
+  linkr-bee/web/vendor/jszip            GPL-3.0 OR MIT (see LICENSE.markdown)
+  linkr-bee/web/vendor/esptool-js       Apache-2.0
+  linkr-bee/web/vendor/agent            Apache-2.0 (see LICENSES.txt)
+  linkr-bee/web/vendor/macaron-cursors  CC-BY-4.0
+  linkr-bee/web/fonts/                  SIL Open Font License 1.1 (OFL.txt)
+
+  The Zephyr application is built against Zephyr RTOS (Apache-2.0) and uses
+  its OpenAMP/rpmsg and NS16550 drivers; no Zephyr sources are vendored here.
+
+Not included
+------------
+
+  Allwinner Tina SDK sources, vendor libraries, vendor firmware blobs, full
+  flash images and chip datasheets are not part of this repository. They are
+  covered by the Allwinner EULA and are not redistributable. Obtain them from
+  the vendor; this repository only carries the code and configuration written
+  for this board.

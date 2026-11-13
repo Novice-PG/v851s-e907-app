@@ -1,0 +1,977 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Linkr Bee Terminal</title>
+    <meta name="theme-color" id="themeColorMeta" content="#05080D" />
+    <script>
+      /* crypto.randomUUID is only exposed in secure contexts, but the LAN
+       * bridge is normally served over plain http://<board>/.  Provide the
+       * same v4 UUID on top of crypto.getRandomValues, which HTTP pages do
+       * get; several modules (agent panel, device executor) assume it. */
+      (function () {
+        var c = window.crypto;
+        if (!c || typeof c.randomUUID === "function") return;
+        function uuid() {
+          var b = new Uint8Array(16);
+          if (typeof c.getRandomValues === "function") c.getRandomValues(b);
+          else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+          b[6] = (b[6] & 0x0f) | 0x40;
+          b[8] = (b[8] & 0x3f) | 0x80;
+          var h = Array.prototype.map.call(b, function (x) {
+            return (x + 256).toString(16).slice(1);
+          }).join("");
+          return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) +
+            "-" + h.slice(16, 20) + "-" + h.slice(20);
+        }
+        try {
+          Object.defineProperty(Object.getPrototypeOf(c), "randomUUID",
+            { value: uuid, configurable: true });
+        } catch (e) {
+          c.randomUUID = uuid;
+        }
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
+    <link rel="stylesheet" href="./style.css?v=20261102-cli" />
+    <link rel="stylesheet" href="./window.css?v=20261026-safearea3" />
+    <link rel="stylesheet" href="./skin-v2.css?v=20261102-cli" />
+    <link rel="stylesheet" href="./mobile-ui.css?v=20261029-layout" />
+    <link rel="stylesheet" href="./form_controls.css?v=20261029" />
+    <link rel="stylesheet" href="./ble_guidance.css?v=20261029" />
+    <link rel="stylesheet" href="./agent_choices.css?v=20261029" />
+    <link rel="stylesheet" href="./agent_ui.css?v=20261029" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo" aria-hidden="true">
+            <svg viewBox="30 30 452 452" width="32" height="32" aria-hidden="true">
+              <path d="M256 76 L412 166 L412 346 L256 436 L100 346 L100 166 Z" fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="round" />
+              <path d="M180 210 L270 256 L180 302" fill="none" stroke="currentColor" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+              <rect x="306" y="214" width="36" height="84" rx="7" fill="currentColor" />
+            </svg>
+          </span>
+          <div>
+            <h1 data-i18n="title">Linkr Bee Terminal</h1>
+            <p id="supportText" class="support-text">Checking Web Bluetooth…</p>
+            <p id="compactDevice" class="support-text compact-device" hidden></p>
+          </div>
+        </div>
+
+        <div class="top-right">
+          <div class="top-actions">
+            <button id="mobileConnectBtn" class="btn btn-primary mobile-connect" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <svg class="connect-icon connect-icon-ble" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7l10 10-4 4V3l4 4L7 17"></path></svg>
+              <svg class="connect-icon connect-icon-lan" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              <span class="btn-label" data-i18n="connect">Connect</span>
+            </button>
+            <button id="panelToggle" class="icon-btn" type="button" data-i18n-title="togglePanel" data-i18n-aria="togglePanel" aria-label="Toggle panel" aria-controls="controlsPanel" aria-expanded="true">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                <line x1="15" y1="3" x2="15" y2="21"></line>
+              </svg>
+            </button>
+            <button id="themeButton" class="icon-btn" type="button" data-i18n-title="theme" data-i18n-aria="theme" aria-label="Theme">
+              <svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+              </svg>
+              <svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path>
+              </svg>
+              <span class="btn-label">Light</span>
+            </button>
+            <button id="langButton" class="icon-btn" type="button" data-i18n-title="language" data-i18n-aria="language" aria-label="Language">
+              <span class="btn-label">中</span>
+            </button>
+          </div>
+          <div class="status-pill" aria-live="polite">
+            <span id="statusDot" class="status-dot"></span>
+            <span id="statusText">Disconnected</span>
+            <span id="deviceName" class="device-name"></span>
+          </div>
+        </div>
+      </header>
+
+      <nav class="rail" aria-label="Sections" data-i18n-aria="sections">
+        <button class="rail-btn active" type="button" data-rail-target="connection" aria-label="Connect" data-i18n-aria="settingsConnection" data-i18n-title="settingsConnection">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.5 13.5l3-3"></path>
+            <path d="M13.4 7.2l1.4-1.4a3.6 3.6 0 015.1 5.1l-1.4 1.4"></path>
+            <path d="M10.6 16.8l-1.4 1.4a3.6 3.6 0 01-5.1-5.1l1.4-1.4"></path>
+          </svg>
+        </button>
+        <button class="rail-btn" type="button" data-rail-target="terminal" aria-label="Serial" data-i18n-aria="settingsTerminal" data-i18n-title="settingsTerminal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 7.5l4 4-4 4"></path>
+            <path d="M11.5 16h5.5"></path>
+          </svg>
+        </button>
+        <button class="rail-btn" type="button" data-rail-target="network" aria-label="Network" data-i18n-aria="settingsNetwork" data-i18n-title="settingsNetwork">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2.6 8.6a14.5 14.5 0 0118.8 0"></path>
+            <path d="M6 12.1a9.5 9.5 0 0112 0"></path>
+            <path d="M9.5 15.6a4.8 4.8 0 015 0"></path>
+            <circle cx="12" cy="19" r="1.1" fill="currentColor" stroke="none"></circle>
+          </svg>
+        </button>
+        <button class="rail-btn" type="button" data-rail-target="board" aria-label="Board I/O" data-i18n-aria="settingsBoard" data-i18n-title="settingsBoard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="7.2" y="7.2" width="9.6" height="9.6" rx="1.6"></rect>
+            <path d="M10 4.2v3M14 4.2v3M10 16.8v3M14 16.8v3M4.2 10h3M4.2 14h3M16.8 10h3M16.8 14h3"></path>
+          </svg>
+        </button>
+        <button class="rail-btn" type="button" data-rail-target="ai" aria-label="Assistant" data-i18n-aria="assistant" data-i18n-title="assistant">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3.2l1.9 5 5 1.9-5 1.9-1.9 5-1.9-5-5-1.9 5-1.9z"></path>
+          </svg>
+        </button>
+        <span class="rail-spacer"></span>
+        <button class="rail-btn" type="button" data-rail-target="about" aria-label="About" data-i18n-aria="aboutNav" data-i18n-title="aboutNav">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="8.6"></circle>
+            <path d="M12 11v5"></path>
+            <circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"></circle>
+          </svg>
+        </button>
+      </nav>
+
+      <aside id="controlsPanel" class="controls window-surface" data-i18n-aria="controls" aria-label="Controls" data-settings-active="connection">
+        <div class="drawer-head window-header">
+          <span data-i18n="panel">Panel</span>
+          <div class="drawer-head-actions">
+            <button id="drawerThemeButton" class="icon-btn" type="button" data-i18n-title="theme" data-i18n-aria="theme" aria-label="Theme">
+              <svg class="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+              </svg>
+              <svg class="icon-moon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"></path>
+              </svg>
+            </button>
+            <button id="drawerLangButton" class="icon-btn" type="button" data-i18n-title="language" data-i18n-aria="language" aria-label="Language">
+              <span class="btn-label">中</span>
+            </button>
+            <button id="drawerClose" class="icon-btn icon-close" type="button" data-i18n-title="closePanel" data-i18n-aria="closePanel" aria-label="Close panel">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <nav class="settings-tabs" aria-label="Settings sections">
+          <button class="settings-tab active" type="button" data-settings-target="connection" data-i18n="settingsConnection" aria-selected="true">Connect</button>
+          <button class="settings-tab" type="button" data-settings-target="terminal" data-i18n="settingsTerminal" aria-selected="false">Serial</button>
+          <button class="settings-tab" type="button" data-settings-target="network" data-i18n="settingsNetwork" aria-selected="false">Network</button>
+          <button class="settings-tab" type="button" data-settings-target="board" data-i18n="settingsBoard" aria-selected="false">Board</button>
+          <button class="settings-tab" type="button" data-settings-target="ai" aria-selected="false" hidden>AI</button>
+          <button class="settings-tab" type="button" data-settings-target="about" data-i18n="aboutNav" aria-selected="false">About</button>
+        </nav>
+
+        <section class="card" data-i18n-aria="connectionControls" aria-label="Connection controls" data-settings-page="connection">
+          <div class="card-title">
+            <span class="dot"></span><span data-i18n="connection">Connection</span>
+          </div>
+          <div class="transport-switch" role="group" data-i18n-aria="transport" aria-label="Transport">
+            <button id="bleModeBtn" class="ts-btn active" type="button" data-i18n="bleMode" aria-pressed="true">BLE</button>
+            <button id="lanModeBtn" class="ts-btn" type="button" data-i18n="lanMode" aria-pressed="false">LAN</button>
+          </div>
+          <label class="field ws-host-field" id="wsHostField" hidden>
+            <span class="field-label" data-i18n="wsHost">Device address</span>
+            <input id="wsHostInput" type="text" data-i18n-ph="placeholderWsHost" placeholder="192.168.1.50" spellcheck="false" autocomplete="off" aria-invalid="false" aria-describedby="wsHostError" aria-errormessage="wsHostError">
+            <span id="wsHostError" class="field-error" role="alert" hidden></span>
+          </label>
+          <label class="field ws-host-field" id="wsTokenField" hidden>
+            <span class="field-label" data-i18n="wsToken">Access token</span>
+            <input id="wsTokenInput" type="text" data-i18n-ph="placeholderWsToken" placeholder="Read it with @s? over BLE" spellcheck="false" autocomplete="off" autocapitalize="none" aria-invalid="false" aria-describedby="wsTokenError" aria-errormessage="wsTokenError">
+            <span id="wsTokenError" class="field-error" role="alert" hidden></span>
+            <span class="field-hint" data-i18n="wsTokenHint">Shown by @s? on the encrypted BLE channel. Leave blank only if LAN auth was disabled with @s token off.</span>
+          </label>
+          <p id="blePairingHint" class="field-hint" data-i18n="pairingHint">New host: press the Bee pairing key once (Linkr Bee X1.0: USER_KEY/GPIO3; C3/C5: GPIO1), then connect within 30 s. Bonded hosts reconnect without a key press.</p>
+          <div class="btn-grid">
+            <button id="connectButton" class="btn btn-primary" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <svg class="connect-icon connect-icon-ble" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7l10 10-4 4V3l4 4L7 17"></path></svg>
+              <svg class="connect-icon connect-icon-lan" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+              <span class="btn-label" data-i18n="connect">Connect</span>
+            </button>
+            <button id="disconnectButton" class="btn" type="button" disabled="">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 0 1 0 12.73M5.64 6.64a9 9 0 0 0 0 12.73"></path><line x1="12" y1="2" x2="12" y2="22" opacity="0"></line><line x1="2" y1="12" x2="22" y2="12"></line></svg>
+              <span class="btn-label" data-i18n="disconnect">Disconnect</span>
+            </button>
+            <button id="switchDeviceButton" class="btn" type="button" disabled="">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"></path></svg>
+              <span class="btn-label" data-i18n="switchDevice">Switch device</span>
+            </button>
+            <button id="queryButton" class="btn" type="button" disabled="">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <span class="btn-label" data-i18n="queryUart">Query UART</span>
+            </button>
+            <button id="clearButton" class="btn" type="button">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+              <span class="btn-label" data-i18n="clear">Clear</span>
+            </button>
+            <button id="saveButton" class="btn" type="button">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              <span class="btn-label" data-i18n="saveLog">Save Log</span>
+            </button>
+          </div>
+        </section>
+
+        <details id="diagnosticsPanel" class="card diagnostics-card" data-settings-page="connection">
+          <summary class="diagnostics-summary">
+            <span class="card-title">
+              <span class="dot"></span>
+              <span data-i18n="diagnostics">Device Diagnostics</span>
+            </span>
+          </summary>
+          <div class="diagnostics-content">
+            <div class="diagnostics-grid" id="diagnosticsGrid" aria-live="polite">
+              <div class="diagnostic-item">
+                <span data-i18n="diagFirmware">Firmware</span>
+                <strong id="diagFirmware">–</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span data-i18n="diagUptime">Uptime</span>
+                <strong id="diagUptime">–</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span data-i18n="diagOwner">BLE access</span>
+                <strong id="diagOwner">–</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span data-i18n="diagUart">UART Buffer</span>
+                <strong id="diagUart">–</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span data-i18n="diagWifi">WiFi</span>
+                <strong id="diagWifi">–</strong>
+              </div>
+              <div class="diagnostic-item">
+                <span data-i18n="diagUpload">Upload Queue</span>
+                <strong id="diagUpload">–</strong>
+              </div>
+            </div>
+            <button id="diagnosticsButton" class="btn btn-soft diagnostics-button" type="button" disabled="">
+              <span class="btn-label" data-i18n="refreshDiagnostics">Refresh diagnostics</span>
+            </button>
+          </div>
+        </details>
+
+        <section id="bleNameCard" class="card" data-i18n-aria="bleNameAria" aria-label="BLE device name" data-settings-page="connection">
+          <div class="card-title"><span class="dot"></span><span data-i18n="bleNameTitle">BLE device name</span></div>
+          <p class="field-hint" data-i18n="bleNameHint">Shown when scanning nearby devices. 1–29 UTF-8 bytes; Chinese and emoji are allowed (an emoji usually uses 4 bytes). The Device ID used for verification does not change.</p>
+          <label class="field" for="bleNameInput">
+            <span class="field-label" data-i18n="bleName">Advertised name</span>
+            <span class="field-row">
+              <input id="bleNameInput" type="text" data-i18n-ph="placeholderBleName" placeholder="Linkr Bee 078C" spellcheck="false" autocomplete="off">
+              <button id="bleNameSetButton" class="btn btn-soft" type="button" disabled="">
+                <span class="btn-label" data-i18n="set">Set</span>
+              </button>
+            </span>
+          </label>
+          <p id="bleNameStatus" class="field-hint" role="status" data-i18n="bleNameUnknown">Connect over BLE to read the current name.</p>
+          <div class="btn-grid compact two-actions">
+            <button id="bleNameDefaultButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="bleNameDefault">Restore default</span>
+            </button>
+            <button id="bleNameQueryButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="bleNameQuery">Read name</span>
+            </button>
+          </div>
+        </section>
+
+        <section id="boardBondsCard" class="card bond-card" data-settings-page="connection" aria-label="Paired devices">
+          <div class="card-title"><span class="dot"></span><span data-bonds-title>已配对设备</span></div>
+          <p class="field-hint" data-bonds-hint></p>
+          <div class="bond-list" data-bonds-list></div>
+          <div class="btn-grid"><button class="btn btn-soft" type="button" data-bonds-refresh>刷新列表</button></div>
+          <p class="field-hint" role="status"></p>
+        </section>
+
+        <section class="card" data-i18n-aria="terminalSettingsAria" aria-label="Terminal settings" data-settings-page="terminal">
+          <div class="card-title"><span class="dot"></span><span data-i18n="terminalSettings">Terminal Settings</span></div>
+          <label class="field">
+            <span class="field-label" data-i18n="uart">UART</span>
+            <span class="field-row">
+              <input id="uartInput" type="text" value="115200,8,n,1,n" spellcheck="false">
+              <button id="setUartButton" class="btn btn-soft" type="button" disabled="">
+                <span class="btn-label" data-i18n="set">Set</span>
+              </button>
+            </span>
+          </label>
+
+          <div id="uartModeField" class="field">
+            <label class="field-label" for="uartModeSelect" data-i18n="uartMode">BLE UART mode</label>
+            <select id="uartModeSelect" aria-describedby="uartModeHint uartTransportStatus">
+              <option value="interactive" data-i18n="uartModeInteractive">Interaction first</option>
+              <option value="reliable" data-i18n="uartModeReliable">Reliability first</option>
+            </select>
+            <span id="uartModeHint" class="field-hint"></span>
+          </div>
+          <p id="uartTransportStatus" class="field-hint" role="status" hidden></p>
+
+          <label class="field">
+            <span class="field-label" data-i18n="enterKey">Enter key</span>
+            <select id="enterSelect">
+              <option value="raw" data-i18n="enterRaw">Raw</option>
+              <option value="cr" data-i18n="enterCr">CR</option>
+              <option value="lf" data-i18n="enterLf">LF</option>
+              <option value="crlf" data-i18n="enterCrlf">CRLF</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="field-label" data-i18n="chunkSize">Chunk size</span>
+            <input id="chunkInput" type="number" min="1" max="244" value="20">
+          </label>
+
+          <div class="field">
+            <label class="field-label" for="fontSelect" data-i18n="fontFamily">Terminal font</label>
+            <select id="fontSelect" aria-describedby="fontHint">
+              <option value="system" data-i18n="fontSystem">System monospace</option>
+              <option value="symbols" data-i18n="fontSymbols">System + Nerd Symbols</option>
+              <option value="jetbrains" data-i18n="fontJetBrains">JetBrains Mono Nerd Font</option>
+              <option value="meslo" data-i18n="fontMeslo">MesloLGS Nerd Font</option>
+              <option value="firacode" data-i18n="fontFiraCode">FiraCode Nerd Font</option>
+            </select>
+            <span id="fontHint" class="field-hint" data-i18n="fontHint">Nerd Font options use fonts installed on this device.</span>
+            <span id="fontPreview" class="font-preview" aria-hidden="true"> main  󰘧 ~/project</span>
+          </div>
+
+          <div class="checks">
+            <label class="check">
+              <input id="localEchoInput" type="checkbox">
+              <span data-i18n="localEcho">Local echo</span>
+            </label>
+            <label class="check">
+              <input id="debugInput" type="checkbox">
+              <span data-i18n="debugIO">Debug I/O</span>
+            </label>
+          </div>
+          <div class="field">
+            <button id="terminalResizeButton" class="btn btn-soft" type="button" aria-describedby="terminalResizeStatus" disabled>
+              <span class="btn-label" data-i18n="resizeTarget">Sync to current window</span>
+            </button>
+            <span id="terminalResizeStatus" class="field-hint" role="status"></span>
+          </div>
+          <div id="remoteSizeField">
+            <label class="check">
+              <input id="remoteSizeInput" type="checkbox">
+              <span data-i18n="remoteSize">Automatically sync target size</span>
+            </label>
+            <span class="field-hint" data-i18n="remoteSizeHint">A native app sends the window size once after connecting. Turn this on to follow later window changes. The soft keyboard never resizes the target tty.</span>
+          </div>
+        </section>
+
+        <section id="logViewCard" class="card" data-settings-page="terminal" aria-labelledby="logViewTitle">
+          <div class="card-title"><span class="dot"></span><span id="logViewTitle" data-i18n="logViewTitle">Log view</span></div>
+          <label class="field">
+            <!-- The card band above already says "Log view"; repeating it as a field
+                 label read as a duplicate heading. The control keeps the name. -->
+            <select id="logViewSelect" aria-describedby="logViewHint"
+                    data-i18n-aria="logViewTitle" aria-label="Log view">
+              <option value="reading" data-i18n="logViewReading">Reading</option>
+              <option value="raw" data-i18n="logViewRaw">Raw</option>
+            </select>
+          </label>
+          <p id="logViewHint" class="field-hint" data-i18n="logViewHint">Reading hides internal Agent probe/setup echoes and simplifies tracked commands. Device output stays visible. Raw and board WebDAV retain original UART bytes.</p>
+          <div class="btn-grid compact two-actions">
+            <button id="saveReadingLog" class="btn btn-soft" type="button"><span class="btn-label" data-i18n="saveReadingLog">Export reading log</span></button>
+            <button id="saveRawLog" class="btn btn-soft" type="button"><span class="btn-label" data-i18n="saveRawLog">Export raw log</span></button>
+          </div>
+          <div class="field shell-integration-field">
+            <span class="field-label" data-i18n="shellIntegrationTitle">Session Shell integration</span>
+            <p class="field-hint" data-i18n="shellIntegrationHint">Optional for an idle POSIX shell. Defines a temporary function without sudo or files; commands still run in sh subprocesses. Re-enable after reconnecting or starting a new chat. Disabling only changes future tracking.</p>
+            <p id="shellIntegrationStatus" class="field-hint" role="status"></p>
+            <div class="btn-grid compact two-actions">
+              <button id="shellIntegrationEnable" class="btn btn-soft" type="button" disabled><span class="btn-label" data-i18n="shellIntegrationEnable">Enable for this Shell</span></button>
+              <button id="shellIntegrationDisable" class="btn btn-soft" type="button" disabled><span class="btn-label" data-i18n="shellIntegrationDisable">Use normal tracking</span></button>
+            </div>
+          </div>
+        </section>
+
+        <section id="wifiWebdavCard" class="card" data-i18n-aria="wifiWebdavAria" aria-label="WiFi and WebDAV" data-settings-page="network">
+          <div class="card-title"><span class="dot"></span><span id="wifiWebdavTitle" data-i18n="wifiWebdav">WiFi &amp; WebDAV</span></div>
+          <p id="managementBleOnly" class="field-hint" role="note" data-i18n="managementBleOnly" hidden>WiFi and WebDAV settings use the BLE management channel. Connect over BLE to change them.</p>
+          <div id="wifiBlock">
+          <div id="wifiConnectedSummary" class="wifi-connected-summary" hidden>
+            <div class="wifi-connected-network">
+              <span class="wifi-connected-mark" aria-hidden="true"></span>
+              <span class="wifi-connected-copy">
+                <span class="wifi-connected-label" data-i18n="connectedNetwork">Connected network</span>
+                <strong id="wifiConnectedSsid">–</strong>
+              </span>
+            </div>
+            <div class="wifi-device-address">
+              <span data-i18n="deviceIp">Device IP</span>
+              <output id="wifiDeviceIp">–</output>
+            </div>
+          </div>
+          <div class="wifi-form">
+            <label class="field" for="wifiSsidInput">
+              <span class="field-label" data-i18n="wifiSsid">Network name</span>
+              <input id="wifiSsidInput" type="text" list="wifiSsidList" data-i18n-ph="placeholderWifiSsid" placeholder="SSID" spellcheck="false" autocomplete="off">
+              <datalist id="wifiSsidList"></datalist>
+            </label>
+            <label class="field" for="wifiPasswordInput">
+              <span class="field-label" data-i18n="wifiPassword">Password</span>
+              <span class="password-row">
+                <input id="wifiPasswordInput" type="password" data-i18n-ph="placeholderWifiPassword" placeholder="Leave blank for an open network" autocomplete="off">
+                <button id="wifiPasswordToggle" class="btn btn-soft password-toggle" type="button" data-i18n-aria="showPassword" aria-label="Show password" aria-pressed="false">
+                  <svg class="icon-eye" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path>
+                    <circle cx="12" cy="12" r="2.5"></circle>
+                  </svg>
+                  <svg class="icon-eye-off" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M17.94 17.94A10.6 10.6 0 0 1 12 19c-6.5 0-10-7-10-7a17.6 17.6 0 0 1 4.06-4.94M9.9 4.24A10.4 10.4 0 0 1 12 4c6.5 0 10 7 10 7a17.7 17.7 0 0 1-2.16 3.19M14.12 14.12a3 3 0 1 1-4.24-4.24"></path>
+                    <line x1="2" y1="2" x2="22" y2="22"></line>
+                  </svg>
+                </button>
+              </span>
+            </label>
+            <div id="wifiNetworkList" class="wifi-network-list" aria-live="polite"></div>
+            <p id="wifiFeedback" class="field-hint wifi-feedback" role="status" data-i18n="wifiScanHint">Scan to select a nearby 2.4 GHz network.</p>
+          </div>
+          <div class="btn-grid compact wifi-actions">
+            <button id="wifiScanButton" class="btn btn-soft" type="button" disabled="">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+              <span class="btn-label" data-i18n="scan">Scan</span>
+            </button>
+            <button id="wifiSetButton" class="btn btn-primary" type="button" disabled="">
+              <span class="btn-label" data-i18n="connectWifi">Connect WiFi</span>
+            </button>
+            <button id="wifiOffButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="off">Off</span>
+            </button>
+            <button id="wifiQueryButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="wifiStatus">WiFi status</span>
+            </button>
+          </div>
+          </div>
+
+          <div id="webdavBlock">
+          <label class="field">
+            <span class="field-label" data-i18n="webdav">WebDAV</span>
+            <span class="field-row">
+              <input id="webdavInput" type="url" data-i18n-ph="placeholderWebdav" placeholder="http://host/path/" spellcheck="false">
+              <button id="webdavSetButton" class="btn btn-soft" type="button" disabled="">
+                <span class="btn-label" data-i18n="set">Set</span>
+              </button>
+            </span>
+          </label>
+          <div class="btn-grid compact two-actions">
+            <button id="webdavOffButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="off">Off</span>
+            </button>
+            <button id="webdavQueryButton" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="webdavStatus">WebDAV status</span>
+            </button>
+          </div>
+          </div>
+        </section>
+
+
+        <section id="boardLedCard" class="card board-card" data-settings-page="board" data-i18n-aria="boardLedAria" aria-label="Status LED">
+          <div class="card-title"><span class="dot"></span><span data-i18n="boardLed">Status LED</span></div>
+          <p id="boardIoBanner" class="board-banner" role="status" hidden></p>
+          <p id="boardIoHint" class="field-hint" data-i18n="boardIoHint">Available on the Linkr Bee X1.0. Commands use the encrypted management channel, not the target UART.</p>
+          <p class="field-hint" data-i18n="boardLedHint">With automatic-status firmware: blue for Bluetooth, white for WiFi, cyan for AI. UART traffic blinks. Manual colours preview for 5 seconds; AI takes priority.</p>
+          <div id="boardLedSwatches" class="board-swatches" role="group" data-i18n-aria="boardLedColors" aria-label="Status LED colours"></div>
+          <div class="field-row board-color-row">
+            <input id="boardLedColor" type="color" value="#001830" data-i18n-aria="boardLedCustom" aria-label="Custom colour">
+            <button id="boardLedApply" class="btn btn-primary" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardApply">Apply</span>
+            </button>
+            <button id="boardLedOff" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="off">Off</span>
+            </button>
+            <button id="boardLedQuery" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="refresh">Refresh</span>
+            </button>
+          </div>
+          <p id="boardLedStatus" class="field-hint board-status" role="status">–</p>
+        </section>
+
+        <section id="boardOptoCard" class="card board-card" data-settings-page="board" data-i18n-aria="boardOptoAria" aria-label="Optocoupler contact">
+          <div class="card-title"><span class="dot"></span><span data-i18n="boardOpto">Isolated contact (J5)</span></div>
+          <div class="btn-grid compact three-actions">
+            <button id="boardOptoClose" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardOptoClose">Close</span>
+            </button>
+            <button id="boardOptoOpen" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardOptoOpen">Open</span>
+            </button>
+            <button id="boardOptoQuery" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="refresh">Refresh</span>
+            </button>
+          </div>
+          <div class="field-row board-pulse-row">
+            <label class="field" for="boardOptoPulseMs">
+              <span class="field-label" data-i18n="boardOptoPulseMs">Pulse length (ms)</span>
+              <input id="boardOptoPulseMs" type="number" min="1" max="60000" step="50" value="500">
+            </label>
+            <button id="boardOptoPulse" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardOptoPulse">Pulse</span>
+            </button>
+          </div>
+          <p id="boardOptoStatus" class="field-hint board-status" role="status">–</p>
+        </section>
+
+        <section id="boardIrCard" class="card board-card board-ir-card" data-settings-page="board" data-i18n-aria="boardIrAria" aria-label="Infrared remote and learning">
+          <div class="card-title"><span class="dot"></span><span data-i18n="boardIr">Infrared remote &amp; learning</span></div>
+          <p class="field-hint" data-i18n="boardIrLearnHint">Send a NEC frame, or learn any remote's signal and keep it on the board.</p>
+
+          <div class="board-subsection">
+            <div class="board-subtitle" data-i18n="boardIrSendTitle">Send NEC frame</div>
+            <div class="field-row board-ir-form">
+              <label class="field" for="boardIrAddress">
+                <span class="field-label" data-i18n="boardIrAddress">Address</span>
+                <input id="boardIrAddress" type="text" placeholder="0x0004" spellcheck="false" autocomplete="off">
+              </label>
+              <label class="field" for="boardIrCommand">
+                <span class="field-label" data-i18n="boardIrCommand">Command</span>
+                <input id="boardIrCommand" type="text" placeholder="0x08" spellcheck="false" autocomplete="off">
+              </label>
+              <label class="field" for="boardIrRepeats">
+                <span class="field-label" data-i18n="boardIrRepeats">Repeats</span>
+                <input id="boardIrRepeats" type="number" min="0" max="16" step="1" value="0">
+              </label>
+            </div>
+            <div class="btn-grid compact two-actions">
+              <button id="boardIrSend" class="btn btn-primary" type="button" disabled="">
+                <span class="btn-label" data-i18n="boardIrSend">Send NEC</span>
+              </button>
+              <button id="boardIrQuery" class="btn btn-soft" type="button" disabled="">
+                <span class="btn-label" data-i18n="boardIrReceiver">Receiver status</span>
+              </button>
+            </div>
+            <p id="boardIrStatus" class="field-hint board-status" role="status">–</p>
+          </div>
+
+          <div id="boardLearnBlock" class="board-subsection">
+            <div class="board-subtitle" data-i18n="boardLearn">Learn a signal</div>
+            <p class="field-hint" data-i18n="boardLearnHint">Point a remote at the receiver and press a key; the frame is saved about 60 ms after the key is released.</p>
+            <div class="board-learn-row">
+              <label class="field" for="boardLearnSlot">
+                <span class="field-label" data-i18n="boardLearnSlot">Slot</span>
+                <select id="boardLearnSlot" aria-label="Learning slot"></select>
+              </label>
+              <div class="board-learn-actions">
+                <button id="boardLearnStart" class="btn btn-soft" type="button" disabled="">
+                  <span class="btn-label" data-i18n="boardLearnStart">Learn</span>
+                </button>
+                <button id="boardLearnStop" class="btn btn-soft" type="button" disabled="">
+                  <span class="btn-label" data-i18n="boardLearnStop">Stop &amp; save</span>
+                </button>
+              </div>
+            </div>
+            <p id="boardLearnStatus" class="field-hint board-status" role="status">–</p>
+          </div>
+
+          <div id="boardSavedBlock" class="board-subsection">
+            <div class="board-subtitle" data-i18n="boardSavedSignals">Saved signals</div>
+            <p class="field-hint" data-i18n="boardSavedHint">Kept in the board's NVS, so they survive reboots. Play sends one directly.</p>
+            <p id="boardSlotEmptyHint" class="field-hint board-empty" data-i18n="boardSlotsEmpty" hidden>No signals learned yet — press Learn, then a remote key.</p>
+            <div id="boardSlotList" class="board-slots" role="list"></div>
+          </div>
+        </section>
+
+        <section class="card" data-i18n-aria="cheatsheetAria" aria-label="Cheat sheet" data-settings-page="terminal">
+          <div class="card-title">
+            <span class="dot"></span><span data-i18n="cheatsheet">Cheat Sheet</span>
+          </div>
+          <details class="ref" open>
+            <summary data-i18n="linuxCmds">Linux Commands</summary>
+            <div id="cheatList" class="ref-body"></div>
+          </details>
+          <details class="ref">
+            <summary data-i18n="shortcuts">Shortcuts</summary>
+            <div id="shortcutList" class="ref-body"></div>
+          </details>
+          <p class="ref-hint" data-i18n="cheatHint">Tip: click a command to send it when connected.</p>
+        </section>
+        <section id="agentSettings" class="agent-settings" data-settings-page="ai" aria-labelledby="agentSettingsTitle" hidden>
+          <form id="agentSettingsForm" novalidate>
+            <div class="agent-settings-scroll">
+              <section class="card agent-card" id="agentModelCard">
+                <div class="card-title"><span class="dot"></span><span id="agentSettingsTitle" data-ai-setting="title">AI configuration</span></div>
+                <fieldset id="agentSettingsFields">
+                  <label class="field"><span class="field-label" data-ai-setting="vendor">AI provider</span>
+                    <select id="agentVendor" aria-describedby="agentVendorHint agentSettingsStatus"></select>
+                    <span id="agentVendorHint" class="field-hint" data-ai-setting="vendorHint"></span>
+                  </label>
+                  <label class="field"><span class="field-label" data-ai-setting="endpoint">API base URL</span>
+                    <input id="agentEndpoint" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="https://api.example.com/v1" aria-describedby="agentEndpointHint agentSettingsStatus">
+                    <span id="agentEndpointHint" class="field-hint" data-ai-setting="endpointHint"></span>
+                  </label>
+                  <label class="field"><span class="field-label" data-ai-setting="key">API key</span>
+                    <input id="agentApiKey" type="password" autocomplete="off" spellcheck="false" aria-describedby="agentKeyHint">
+                    <span id="agentKeyHint" class="field-hint" data-ai-setting="keyHint"></span>
+                  </label>
+                  <p class="key-note">
+                    <svg class="key-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="10" width="16" height="11" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+                    <span data-ai-setting="keyStorage"></span>
+                  </p>
+                  <label class="field"><span class="field-label" data-ai-setting="model">Model ID</span>
+                    <input id="agentModel" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="model-id" list="agentModelOptions" aria-describedby="agentModelHint agentSettingsStatus">
+                    <datalist id="agentModelOptions"></datalist>
+                    <span id="agentModelHint" class="field-hint" data-ai-setting="modelHint"></span>
+                  </label>
+                  <div class="agent-model-actions">
+                    <button id="agentModelFetch" class="btn btn-soft" type="button" data-ai-setting="fetchModels">Fetch model list</button>
+                    <p id="agentModelStatus" class="field-hint model-fetch-status" role="status" aria-live="polite"></p>
+                  </div>
+
+
+                  <details id="agentAdvancedSettings" class="agent-inline-disclosure">
+                    <summary><span data-ai-setting="advanced">Advanced options</span></summary>
+                    <div class="agent-advanced-fields">
+                      <label class="field"><span class="field-label" data-ai-setting="headers">Extra request headers</span>
+                      <textarea id="agentHeaders" rows="2" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="anthropic-dangerous-direct-browser-access: true" aria-describedby="agentHeadersHint agentSettingsStatus"></textarea>
+                      <span id="agentHeadersHint" class="field-hint" data-ai-setting="headersHint"></span>
+                      </label>
+                      <label class="field"><span class="field-label" data-ai-setting="provider">API protocol</span>
+                      <select id="agentProvider" aria-describedby="agentProviderHint agentSettingsStatus"></select>
+                      <span id="agentProviderHint" class="field-hint" data-ai-setting="providerHint"></span>
+                      </label>
+                      <label class="field"><span class="field-label" data-ai-setting="reasoning">Reasoning effort</span>
+                      <select id="agentReasoning" aria-describedby="agentReasoningHint agentSettingsStatus"></select>
+                      <span id="agentReasoningHint" class="field-hint" data-ai-setting="reasoningHint"></span>
+                      </label>
+                      <label class="field"><span class="field-label" data-ai-setting="contextWindow">Context window in tokens (optional)</span>
+                      <input id="agentContextWindow" type="number" min="0" max="2000000" step="1" inputmode="numeric" autocomplete="off" placeholder="0" aria-describedby="agentContextWindowHint agentSettingsStatus">
+                      <span id="agentContextWindowHint" class="field-hint" data-ai-setting="contextWindowHint"></span>
+                      </label>
+                      <label class="field"><span class="field-label" data-ai-setting="maxTokens">Max output tokens (optional)</span>
+                      <input id="agentMaxTokens" type="number" min="0" max="100000" step="1" inputmode="numeric" autocomplete="off" placeholder="0" aria-describedby="agentMaxTokensHint agentSettingsStatus">
+                      <span id="agentMaxTokensHint" class="field-hint" data-ai-setting="limitsHint"></span>
+                      </label>
+                      <label class="field"><span class="field-label" data-ai-setting="pricing">Token prices per 1M (optional)</span>
+                      <span class="field-row pricing">
+                      <input id="agentPriceInput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="input" aria-label="input price per million tokens" aria-describedby="agentPricingHint agentSettingsStatus">
+                      <input id="agentPriceOutput" type="number" min="0" step="0.01" inputmode="decimal" placeholder="output" aria-label="output price per million tokens" aria-describedby="agentPricingHint agentSettingsStatus">
+                      </span>
+                      <span id="agentPricingHint" class="field-hint" data-ai-setting="pricingHint"></span>
+                      </label>
+                    </div>
+                  </details>
+                </fieldset>
+
+                <details id="cliproxyImport" class="agent-inline-disclosure cliproxy-import">
+                <summary><span data-ai-setting="importTitle"></span></summary>
+                <fieldset id="cliproxyFields" class="agent-advanced-fields">
+                <p class="field-hint" data-cliproxy="hint"></p>
+                <label class="field"><span class="field-label" data-cliproxy="address">CLIProxyAPI server URL</span>
+                <input id="cliproxyAddress" type="url" inputmode="url" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="cliproxyAddressHint cliproxyStatus">
+                <span id="cliproxyAddressHint" class="field-hint" data-cliproxy="addressHint"></span>
+                </label>
+                <label class="field"><span class="field-label" data-cliproxy="management">Temporary management key</span>
+                <input id="cliproxySecret" type="password" autocomplete="off" spellcheck="false" aria-describedby="cliproxySecretHint cliproxyStatus">
+                <span id="cliproxySecretHint" class="field-hint" data-cliproxy="secretHint"></span>
+                </label>
+                <button id="cliproxyConnect" class="btn btn-primary" type="button" data-cliproxy="connect">Connect and import</button>
+                <div id="cliproxyChoices" hidden>
+                <label id="cliproxyClientField" class="field" hidden><span class="field-label" data-cliproxy="client">Choose a client API key</span>
+                <select id="cliproxyClient" aria-describedby="cliproxyStatus"></select>
+                </label>
+                <label id="cliproxyModelField" class="field" hidden><span class="field-label" data-cliproxy="model">Choose a model</span>
+                <select id="cliproxyModel" aria-describedby="cliproxyStatus"></select>
+                </label>
+                <button id="cliproxySave" class="btn btn-primary" type="button" data-cliproxy="save" disabled>Save imported configuration</button>
+                </div>
+                <button id="cliproxyCancel" class="btn" type="button" data-cliproxy="cancel" hidden>Cancel import</button>
+                <p id="cliproxyStatus" class="field-hint" role="status" aria-live="polite"></p>
+                </fieldset>
+              </details>
+              </section>
+
+              <section class="card agent-board-config" id="agentBoardConfigCard" aria-labelledby="agentBoardConfigTitle">
+                <div class="card-title"><span class="dot"></span><span id="agentBoardConfigTitle" data-ai-setting="boardConfigTitle"></span></div>
+<p class="field-hint" data-ai-setting="boardConfigHint"></p>
+            <label class="check"><input id="agentBoardConfigSecrets" type="checkbox"><span data-ai-setting="boardConfigSecrets"></span></label>
+            <div class="btn-grid">
+              <button id="agentBoardConfigSave" class="btn" type="button" data-ai-setting="boardConfigSave"></button>
+              <button id="agentBoardConfigLoad" class="btn" type="button" data-ai-setting="boardConfigLoad"></button>
+              <button id="agentBoardConfigClear" class="btn" type="button" data-ai-setting="boardConfigClear"></button>
+            </div>
+            <p id="agentBoardConfigStatus" class="field-hint" role="status" aria-live="polite"></p>
+              </section>
+
+        <section id="boardPromptCard" class="card board-card" data-i18n-aria="boardPromptAria" aria-label="On-board AI prompt">
+          <div class="card-title"><span class="dot"></span><span data-i18n="boardPrompt">On-board AI prompt</span></div>
+          <p class="field-hint" data-i18n="boardPromptHint">The custom instructions are stored in the board's NVS. The assistant reads them when a conversation starts, so they follow the board instead of one browser.</p>
+          <label class="field" for="boardPromptText">
+            <span class="field-label" data-i18n="boardPromptText">Custom instructions</span>
+            <textarea id="boardPromptText" rows="3" spellcheck="false" data-i18n-ph="boardPromptPlaceholder" placeholder="例如：回答前先给出结论，命令用中文解释。"></textarea>
+          </label>
+          <div class="board-prompt-meta"><span id="boardPromptCount" class="board-count">0 / 240</span></div>
+          <div class="board-prompt-actions">
+            <button id="boardPromptSave" class="btn btn-primary" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardPromptSave">Save to board</span>
+            </button>
+            <button id="boardPromptLoad" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardPromptLoad">Load</span>
+            </button>
+            <button id="boardPromptClear" class="btn btn-soft" type="button" disabled="">
+              <span class="btn-label" data-i18n="boardPromptClear">Clear</span>
+            </button>
+          </div>
+          <p id="boardPromptStatus" class="field-hint board-status" role="status">–</p>
+        </section>
+
+              <details class="card agent-card" id="agentBindingCard" aria-labelledby="targetBindingTitle">
+                <summary class="card-title"><span class="dot"></span><span id="targetBindingTitle" data-ai-setting="bindingTitle"></span></summary>
+                <div class="target-binding">
+<p class="field-hint" data-ai-setting="bindingHint"></p>
+            <p id="targetBindingIdentity" class="field-hint"></p>
+            <fieldset id="targetBindingFields">
+              <div class="btn-grid">
+                <button type="button" class="btn" id="targetVerify" data-ai-setting="bindingVerify"></button>
+                <button type="button" class="btn btn-primary" id="targetBind" data-ai-setting="bindingBind"></button>
+                <button type="button" class="btn" id="targetUnbind" data-ai-setting="bindingClear"></button>
+              </div>
+              <label class="check"><input id="targetRegenerateConfirm" type="checkbox"><span data-ai-setting="bindingRegenerateHint"></span></label>
+              <button type="button" class="btn" id="targetRegenerate" data-ai-setting="bindingRegenerate" disabled></button>
+            </fieldset>
+            <p id="targetBindingStatus" class="field-hint" role="status" aria-live="polite"></p>
+                </div>
+              </details>
+
+              <details class="card agent-card" id="agentPrivacyCard">
+                <summary class="card-title"><span class="dot"></span><span data-ai-setting="privacyTitle"></span></summary>
+                <p class="field-hint" data-ai-setting="storage"></p>
+            <p class="field-hint" data-ai-setting="notice"></p>
+              </details>
+            </div>
+            <div class="agent-config-footer">
+              <p id="agentSettingsStatus" class="field-hint" role="status" aria-live="polite"></p>
+              <div class="agent-config-footer-actions">
+                <button id="agentSettingsSave" class="btn agent-config-save" type="submit" data-ai-setting="save">Save configuration</button>
+                <button id="agentSettingsClear" class="btn agent-config-clear" type="button" data-ai-setting="clear">Clear configuration</button>
+              </div>
+            </div>
+          </form>
+        </section>
+        <section id="aboutPage" class="card about-page" data-settings-page="about" aria-labelledby="aboutTitle">
+          <div class="card-title">
+            <span class="dot"></span><span id="aboutTitle" data-i18n="aboutNav">About</span>
+          </div>
+          <p class="about-lead" data-i18n="aboutLead">An open-source serial terminal for Linkr Bee bridges, with an assistant that talks to the model service you configure.</p>
+          <p id="aboutMeta" class="about-meta"></p>
+          <h3 class="about-heading" data-i18n="aboutComponentsHeading">Open source components</h3>
+          <p class="field-hint" data-i18n="aboutComponentsHint">Everything the app and its firmware ship, with the licence each one is distributed under. The full licence texts travel with the components.</p>
+          <div id="aboutComponents"></div>
+          <h3 class="about-heading" data-i18n="aboutComplianceHeading">Licences and compliance</h3>
+          <ul class="about-compliance">
+            <li data-i18n="aboutComplianceProject">This project is released under Apache-2.0.</li>
+            <li data-i18n="aboutComplianceThirdParty">Third-party components remain the property of their authors and are distributed under their own licences, listed above.</li>
+            <li data-i18n="aboutComplianceDual">DOMPurify is dual-licensed MPL-2.0 / Apache-2.0; this project uses it under Apache-2.0.</li>
+            <li data-i18n="aboutComplianceCcBy">The macaron cursors are CC-BY-4.0, © UnionTech Software Technology Co., Ltd.; three shapes were converted from XCursor to PNG. Attribution and the source revision are in vendor/macaron-cursors/README.md.</li>
+          </ul>
+          <h3 class="about-heading" data-i18n="aboutContributorsHeading">Contributors</h3>
+          <p class="field-hint" data-i18n="aboutContributorsHint">Taken from the git history of radxa/linkr-bee; duplicate identities are merged.</p>
+          <div id="aboutContributors" class="about-contributors"></div>
+          <div class="about-links">
+            <a id="aboutRepository" data-i18n="aboutRepository" target="_blank" rel="noreferrer">Repository</a>
+            <a id="aboutIssues" data-i18n="aboutIssues" target="_blank" rel="noreferrer">Report a problem</a>
+            <a id="aboutLicenseLink" data-i18n="aboutLicenseLink" target="_blank" rel="noreferrer">Licence text</a>
+          </div>
+        </section>
+      </aside>
+
+      <section class="workpanel">
+        <div id="terminalWorkspace" class="terminal-workspace">
+        <section id="terminalCard" class="terminal-card window-surface" aria-label="Interactive serial terminal" data-i18n-aria="terminalAria">
+          <div class="terminal-head window-header">
+            <span class="term-title">
+              <span class="term-led"></span><span data-i18n="serialOutput">Serial Terminal</span>
+            </span>
+            <div class="term-tools">
+              <div id="serialControlGroup" class="serial-control-group" hidden>
+              <span id="serialControlStatus" class="serial-control-status" role="status" hidden></span>
+              <button id="serialControlButton" class="term-tool serial-control-button" type="button" hidden></button>
+              </div>
+              <div class="terminal-actions">
+              <button id="agentButton" class="term-tool" type="button" aria-label="Serial assistant" hidden>AI</button>
+              <button id="zoomOutBtn" class="term-tool" type="button" data-i18n-title="zoomOut" data-i18n-aria="zoomOut" aria-label="Decrease font">A−</button>
+              <button id="zoomInBtn" class="term-tool" type="button" data-i18n-title="zoomIn" data-i18n-aria="zoomIn" aria-label="Increase font">A+</button>
+              <button id="fullscreenBtn" class="term-tool" type="button" data-i18n-title="fullscreen" data-i18n-aria="fullscreen" aria-label="Fullscreen terminal" aria-pressed="false">
+                <svg class="fullscreen-icon icon-expand" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"></path>
+                </svg>
+                <svg class="fullscreen-icon icon-collapse" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M3 8h5V3M21 8h-5V3M3 16h5v5M21 16h-5v5"></path>
+                </svg>
+              </button>
+              <button id="autoscrollBtn" class="term-tool" type="button" data-i18n-title="autoScroll" data-i18n-aria="autoScroll" aria-label="Auto-scroll" aria-pressed="true">⤓</button>
+              <button id="copyBtn" class="term-tool" type="button" data-i18n-title="copy" data-i18n-aria="copy" aria-label="Copy selection">⧉</button>
+              <span class="term-hint" data-i18n="xterm">xterm.js</span>
+              </div>
+            </div>
+          </div>
+          <div
+            id="terminalOutput"
+            class="terminal-output"
+            role="application"
+            aria-label="Interactive serial terminal"
+            data-i18n-aria="terminalAria"
+            aria-describedby="terminalInputHint"
+          >
+            <div class="terminal-empty">
+              <svg class="te-mark" viewBox="30 30 452 452" aria-hidden="true">
+                <path d="M256 76 L412 166 L412 346 L256 436 L100 346 L100 166 Z" fill="none" stroke="currentColor" stroke-width="30" stroke-linejoin="round" />
+                <path d="M180 210 L270 256 L180 302" fill="none" stroke="currentColor" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+                <rect x="306" y="214" width="36" height="84" rx="7" fill="currentColor" />
+              </svg>
+              <p class="te-title" data-i18n="emptyTitle">No device yet</p>
+              <p class="te-hint" data-i18n="emptyHint">Tap Connect to scan for a nearby Linkr Bee</p>
+            </div>
+          </div>
+          <p id="bootNotice" class="boot-notice" role="status" hidden>
+            <span id="bootNoticeText"></span>
+            <button id="bootNoticeReload" class="btn" type="button"></button>
+          </p>
+          <div class="presets" id="presetChips" data-i18n-aria="quickSend" aria-label="Quick send">
+            <button class="preset-chip" type="button" data-cmd="help" disabled>help</button>
+            <button class="preset-chip" type="button" data-cmd="version" disabled>version</button>
+            <button class="preset-chip" type="button" data-cmd="uname -a" disabled>uname -a</button>
+            <button class="preset-chip" type="button" data-cmd="df -h" disabled>df -h</button>
+            <button class="preset-chip" type="button" data-cmd="reboot" data-confirm="confirmReboot" data-danger="true" disabled>reboot</button>
+          </div>
+          <div class="terminal-input-bar">
+            <span id="terminalInputHint" class="terminal-input-hint" data-i18n="terminalInputDisconnected">
+              Connect a device to enable terminal input
+            </span>
+            <div id="terminalKeyBar" class="terminal-input-actions" role="group" data-i18n-aria="terminalKeys" aria-label="Terminal keys · swipe for more">
+              <div class="terminal-key-scroll">
+                <div class="terminal-key-group terminal-modifiers">
+                  <button id="focusTerminalButton" class="btn terminal-key terminal-keyboard" type="button" disabled aria-pressed="false" data-i18n-title="keyboard" data-i18n-aria="keyboard" aria-label="Open keyboard"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h.01M11 9h.01M15 9h.01M19 9h.01M7 13h.01M11 13h.01M15 13h.01M19 13h.01M8 16h8"></path></svg></button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Escape">Esc</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Tab">Tab</button>
+                  <button id="shiftKeyButton" class="btn terminal-key terminal-modifier" type="button" disabled aria-pressed="false" data-modifier="shift">Shift</button>
+                  <button id="controlKeyButton" class="btn terminal-key terminal-modifier" type="button" disabled aria-pressed="false" data-modifier="ctrl">Ctrl</button>
+                  <button id="altKeyButton" class="btn terminal-key terminal-modifier" type="button" disabled aria-pressed="false" data-modifier="alt">Alt</button>
+                </div>
+                <div class="terminal-key-group terminal-navigation">
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Home">Home</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="ArrowUp" data-i18n-aria="keyUp" aria-label="Up arrow">↑</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="End">End</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="ArrowLeft" data-i18n-aria="keyLeft" aria-label="Left arrow">←</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="ArrowDown" data-i18n-aria="keyDown" aria-label="Down arrow">↓</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="ArrowRight" data-i18n-aria="keyRight" aria-label="Right arrow">→</button>
+                </div>
+                <div class="terminal-key-group terminal-editing">
+                  <button id="pasteTerminalButton" class="btn terminal-key" type="button" disabled data-i18n="paste">Paste</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="PageUp">PgUp</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Enter">Enter</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="PageDown">PgDn</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Backspace" data-i18n-aria="backspace" aria-label="Backspace">⌫</button>
+                </div>
+                <div class="terminal-key-group terminal-symbols">
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="/">/</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="|">|</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="~">~</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="\">\</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="`">`</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="-">-</button>
+                </div>
+                <div class="terminal-key-group terminal-shortcuts">
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-D">Ctrl-D</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-Z">Ctrl-Z</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-L">Ctrl-L</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-A">Ctrl-A</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-E">Ctrl-E</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-R">Ctrl-R</button>
+                </div>
+                <div class="terminal-key-group terminal-key-pair">
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-U">Ctrl-U</button>
+                  <button class="btn terminal-key" type="button" disabled data-terminal-key="Delete">Del</button>
+                </div>
+              </div>
+              <button class="btn terminal-key" type="button" disabled data-terminal-key="Ctrl-C" id="breakButton">Ctrl-C</button>
+              <button id="terminalKeysToggle" class="btn terminal-key terminal-keys-toggle" type="button" aria-expanded="false" aria-controls="terminalKeyBar terminalKeysCustomize">More</button>
+            </div>
+            <button id="terminalKeysCustomize" class="terminal-keys-customize" type="button" hidden>Choose favorite keys</button>
+          </div>
+        </section>
+        </div>
+
+        <div class="statusbar" data-i18n-aria="statusAria" aria-label="Status">
+          <span class="sb-item"><b id="rxCount">0</b> <span data-i18n="rx">RX</span></span>
+          <span class="sb-item"><b id="txCount">0</b> <span data-i18n="tx">TX</span></span>
+          <span class="sb-item"><span data-i18n="baud">Baud</span> <b id="baudLabel">115200</b></span>
+          <span class="sb-item sb-tty" id="ttySizeItem" title=""><span data-i18n="tty">TTY</span> <b id="ttySizeLabel">—</b></span>
+          <span class="sb-item sb-state" id="connStateText"><span data-i18n="disconnected">Disconnected</span></span>
+        </div>
+      </section>
+
+      <div id="drawerBackdrop" class="drawer-backdrop" aria-hidden="true"></div>
+    </main>
+
+    <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+    <script type="module" src="./native-bootstrap.js"></script>
+    <script src="./vendor/xterm/xterm.js"></script>
+    <script src="./vendor/addon-fit/addon-fit.js"></script>
+    <script type="module" src="./ble_transport.js?v=20260901-mobile1"></script>
+    <script type="module" src="./app.js?v=20261113-lan-hint"></script>
+    <script type="module" src="./ble_guidance.js?v=20261029"></script>
+    <script type="module" src="./rail_nav.js?v=20261017-v2"></script>
+    <script>
+      /* The terminal boots from static ES modules, so one failed request -- a
+       * dropped connection, a proxy, a stale cache -- leaves this page blank
+       * with nothing on it to say why. A local server with a listen backlog of
+       * five against a burst of thirty requests did exactly that about one load
+       * in ten until it was fixed.
+       *
+       * This is an inline, dependency-free classic script on purpose: whatever
+       * else failed to load, it still runs. The strings are picked from
+       * navigator.language rather than from data-i18n, because the code that
+       * applies those is app.js, which may be the thing that never arrived. */
+      (function () {
+        var zh = (navigator.language || "").toLowerCase().indexOf("zh") === 0;
+        var graceMs = 6000;
+        var notice = document.getElementById("bootNotice");
+        var text = document.getElementById("bootNoticeText");
+        var reload = document.getElementById("bootNoticeReload");
+        var shown = false;
+
+        function terminalReady() {
+          return Boolean(document.querySelector(".terminal-output .xterm"));
+        }
+        function show() {
+          if (shown || terminalReady()) return;
+          shown = true;
+          text.textContent = zh
+            ? "终端没有启动：页面加载时有文件没能取到。刷新一次通常就好；如果反复出现，检查网络或代理。"
+            : "The terminal did not start: something failed to load with the page. Reloading usually fixes it; if it keeps happening, check the network or a proxy.";
+          reload.textContent = zh ? "重新加载" : "Reload";
+          notice.hidden = false;
+        }
+
+        reload.addEventListener("click", function () { location.reload(); });
+        // A failed module in the graph raises this on the entry script element.
+        addEventListener("error", function (event) {
+          if (event.target && event.target.tagName === "SCRIPT") show();
+        }, true);
+
+        // Anything that does not raise an event, and a late success that should
+        // take the notice back down.
+        var deadline = Date.now() + graceMs;
+        (function poll() {
+          if (terminalReady()) { notice.hidden = true; shown = false; }
+          else if (Date.now() > deadline) show();
+          setTimeout(poll, Date.now() > deadline ? 1000 : 200);
+        })();
+      })();
+    </script>
+  </body>
+</html>

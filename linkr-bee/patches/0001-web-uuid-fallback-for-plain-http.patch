@@ -1,0 +1,37 @@
+--- a/web/index.html
++++ b/web/index.html
+@@ -5,6 +5,34 @@
+     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+     <title>Linkr Bee Terminal</title>
+     <meta name="theme-color" id="themeColorMeta" content="#05080D" />
++    <script>
++      /* crypto.randomUUID is only exposed in secure contexts, but the LAN
++       * bridge is normally served over plain http://<board>/.  Provide the
++       * same v4 UUID on top of crypto.getRandomValues, which HTTP pages do
++       * get; several modules (agent panel, device executor) assume it. */
++      (function () {
++        var c = window.crypto;
++        if (!c || typeof c.randomUUID === "function") return;
++        function uuid() {
++          var b = new Uint8Array(16);
++          if (typeof c.getRandomValues === "function") c.getRandomValues(b);
++          else for (var i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
++          b[6] = (b[6] & 0x0f) | 0x40;
++          b[8] = (b[8] & 0x3f) | 0x80;
++          var h = Array.prototype.map.call(b, function (x) {
++            return (x + 256).toString(16).slice(1);
++          }).join("");
++          return h.slice(0, 8) + "-" + h.slice(8, 12) + "-" + h.slice(12, 16) +
++            "-" + h.slice(16, 20) + "-" + h.slice(20);
++        }
++        try {
++          Object.defineProperty(Object.getPrototypeOf(c), "randomUUID",
++            { value: uuid, configurable: true });
++        } catch (e) {
++          c.randomUUID = uuid;
++        }
++      })();
++    </script>
+     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+     <link rel="stylesheet" href="./vendor/xterm/xterm.css" />
+     <link rel="stylesheet" href="./style.css?v=20261030-full-labels" />
