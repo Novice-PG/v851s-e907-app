@@ -36,6 +36,17 @@ docs/
 └── REVIEW.md                    review notes for the V851S adaptation
 ```
 
+## Firmware features
+
+- UART3 bridge with 64 KiB rings in each direction (runtime `LINKRCFG`
+  reconfiguration, `LINKRSTAT` occupancy/drop counters)
+- OpenAMP/rpmsg `rpmsg_chrdev` endpoint, 256-byte messages, backpressure into
+  the A7 instead of silent drops
+- A7 side: HTTP(80)+HTTPS(8443) terminal, WSS, BLE GATT (NUS, Management v1,
+  Reliable UART v1), LAN session tickets, Wi-Fi control via `wctl`
+- Diagnostics: `@i?` reports firmware version, uptime, live UART ring fill and
+  drop counters, Wi-Fi and upload state; the LAN page queries it on connect
+
 ## Quick start
 
 E907 firmware (needs a Zephyr checkout with the `v851s` BSP):

@@ -53,7 +53,7 @@ FRAME_NAME = 0x11          # daemon -> linkr-ble: advertised name changed
 FRAME_EVENT = 0x12         # daemon -> linkr-ble: async mgmt event (reqid,flags,text)
 
 ADV_NAME = "Linkr Bee V851S"
-FIRMWARE_VERSION = "v851s-lizard-e907-v10"
+FIRMWARE_VERSION = "v851s-lizard-e907-v11"
 
 # Custom BLE advertised name, persisted on UDISK (mirrors the firmware's
 # `linkr/ble/name` settings key). /var is tmpfs, so it must live on UDISK.
@@ -823,6 +823,10 @@ class Session:
     def _save_token(self):
         if self.ws_token:
             _write_text(WS_TOKEN_FILE, self.ws_token + "\n")
+            try:
+                os.chmod(WS_TOKEN_FILE, 0o600)
+            except OSError:
+                pass
         else:
             try:
                 os.remove(WS_TOKEN_FILE)
@@ -1352,7 +1356,8 @@ class Session:
         stat = self._bridge_stat() or {}
         dropped = (stat.get("rx_dropped", 0) + stat.get("tx_dropped", 0))
         lines = [
-            "@info fw version=%s zephyr=4.5.0\r\n" % FIRMWARE_VERSION,
+            "@info fw version=%s zephyr=4.5.0 uart_ring=65536 "
+            "features=rpmsg,uart-reconfig,lan-ble\r\n" % FIRMWARE_VERSION,
             "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
             "@info uart dropped=%d dropped_no_conn=0 buffer=%d/%d "
             "tx=%d/%d tx_dropped=%d\r\n" % (

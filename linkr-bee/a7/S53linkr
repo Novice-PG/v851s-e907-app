@@ -15,7 +15,13 @@ PIDFILE=/var/run/linkr-bee.pid
 LOGFILE=/var/log/linkr-bee.log
 PORT=80
 TLS_PORT=${TLS_PORT:-8443}
+# Prefer a per-board certificate on the data partition: it survives reflashing
+# the read-only rootfs and keeps the private key out of any image.
 CERT_DIR=/usr/share/linkr-bee/certs
+if [ -f /mnt/UDISK/persist/certs/linkr-bee.crt ] &&
+   [ -f /mnt/UDISK/persist/certs/linkr-bee.key ]; then
+	CERT_DIR=/mnt/UDISK/persist/certs
+fi
 
 start() {
 	mkdir -p /var/run
@@ -32,6 +38,8 @@ start() {
 	fi
 	echo -n "Starting linkr-bee: "
 	nohup python3 -u "$DAEMON" --port "$PORT" --tls-port "$tls" \
+		--cert "$CERT_DIR/linkr-bee.crt" \
+		--key "$CERT_DIR/linkr-bee.key" \
 		--web-root "$WEBROOT" >>"$LOGFILE" 2>&1 &
 	echo $! >"$PIDFILE"
 	sleep 1

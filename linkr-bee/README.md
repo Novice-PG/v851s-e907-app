@@ -15,6 +15,7 @@ and `radxa/linkr-bee` stay untouched.
 | `a7/ble-adv-data.py` | `/usr/bin/ble-adv-data.py` | pushes LE ADV/SCAN_RSP the 4.9 kernel drops |
 | `a7/certs/san.cnf` | `/usr/share/linkr-bee/certs/` | certificate template (key is per board) |
 | `a7/S99linkrbee.legacy` | — | previous boot script, reference only |
+| `a7/legacy/S54bluetooth.off` | — | pre-rfkill revision of the BT script, kept for reference |
 | `patches/` | — | three web patches on top of `d9b2e00` |
 | `snapshot/web/` | — | every patched web file (`index.html`, `app.js`, `local_download.js`, `agent_task_state.js`, `sha256_fallback.js`) |
 | `web/` | `/usr/share/linkr-bee/web/` | complete web terminal as shipped |

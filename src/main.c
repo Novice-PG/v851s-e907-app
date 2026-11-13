@@ -31,6 +31,7 @@ int main(void)
 	printk("rpmsg buffers 0x43000000, vrings 0x43040000 / 0x43060000\n");
 	printk("resource table: 1 vdev + 2 vrings + RAM console trace\n");
 	printk("mode: Linkr Bee UART3 bridge over rpmsg\n");
+	printk("features: 64 KiB UART rings, LINKRCFG/LINKRSTAT, rpmsg chrdev\n");
 
 	(void)linkr_bridge_init();
 	e907_openamp_start();

@@ -67,8 +67,11 @@ On connect the daemon sends:
 @ws auth=none          (no token)
 ```
 
-The client then sends `@ws auth=<token>`, and the daemon answers
-`@ws auth=ok`. The token is stored on the board at
+With no token file the bridge is open (`@ws auth=none`), which is the factory
+default.  Set one with `@s token` (random) or `@s token=<32 hex>`; new
+connections then get `@ws auth=required` and are closed unless they send the
+token within 3 s. `@s token off` removes it again. The token is stored (mode
+600) on the board at
 `/mnt/UDISK/persist/ws-token` and managed with `@s token=<32 hex>`,
 `@s token off` and `@s?`.
 
