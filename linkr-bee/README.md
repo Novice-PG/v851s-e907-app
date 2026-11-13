@@ -44,5 +44,9 @@ tree can be recovered even if the upstream checkout is lost.
 ## Licence
 
 `a7/linkr_ble.c` and `a7/linkr-bee-daemon` are original work, Apache-2.0.
-`web/`, `snapshot/web/` and `patches/` derive from radxa/linkr-bee
-(Apache-2.0, see `LICENSE`); vendored assets keep their own licences.
+Linkr Bee upstream is [radxa/linkr-bee](https://github.com/radxa/linkr-bee),
+baseline `d9b2e00`, Apache-2.0 (see `LICENSE`): `web/`, `snapshot/web/` and
+`patches/` are its patched front-end.  The ESP32/Zephyr firmware is not copied
+here; `a7/linkr_ble.c` and `a7/linkr-bee-daemon` are an independent V851S
+implementation of the same services and protocol.  Vendored web assets keep
+their own licences.

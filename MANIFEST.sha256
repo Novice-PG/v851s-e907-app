@@ -25,7 +25,7 @@ be081c29fb82cc65191c3e3b8b41b395  ./linkr-bee/patches/0002-web-lan-management-hi
 179a621b40b75bda0257d1a18bbd3a74  ./linkr-bee/patches/0003-web-sha256-fallback-for-plain-http.patch
 8b8e5bf3601e9163d76b6a07cec4e70d  ./linkr-bee/patches/0004-web-wss-for-https-page.patch
 df02d3915b1d534665fa9c6d0408dc25  ./linkr-bee/patches/0005-web-lan-diagnostics-autofetch.patch
-5f259feefdcc527ff2594e919b18010c  ./linkr-bee/README.md
+fe917b33846083c08bc1a04be2860d4f  ./linkr-bee/README.md
 1575e4a0d5d93babcd5d697298ce3f07  ./linkr-bee/snapshot/web/agent_task_state.js
 839bea52e730f36393657a2c4e994e1c  ./linkr-bee/snapshot/web/app.js
 39f8ce3c04cde21152e0d3e09a7b4b74  ./linkr-bee/snapshot/web/index.html
@@ -132,9 +132,9 @@ a6f7d231a2745fd8aaa465e2dd7c7c04  ./linkr-bee/web/vendor/xterm/LICENSE
 5403ebbaef7d20632abb0716beb9c437  ./linkr-bee/web/vendor/xterm/xterm.css
 d7aaaef27ff18a0e8deff9b29439090e  ./linkr-bee/web/vendor/xterm/xterm.js
 be51d01a17648fe7652c7527d3f56f25  ./linkr-bee/web/window.css
-7f918d479d877a04c6a9b82b5fd00071  ./NOTICE
+388843da39f6297b0b5fb3b8ad88416d  ./NOTICE
 24acb459c696faa2c0b17a94b5e4438e  ./prj.conf
-b7c7555f30e37274527c4b8821b1d59a  ./README.md
+fc809988ff749082f7337426ee3c929a  ./README.md
 fb90da9beaeb3984de9ca7de6ac49f1b  ./src/board_early.c
 615ba3bb29442712a176bbc272377bae  ./src/linkr_bridge.c
 77e3ffa8bd047b39c2df80286c58dee4  ./src/linkr_bridge.h

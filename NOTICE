@@ -20,9 +20,13 @@ Original work in this repository
 Third-party components
 ----------------------
 
-  linkr-bee/web/, linkr-bee/snapshot/web/, linkr-bee/patches/
-      Derived from radxa/linkr-bee (https://github.com/radxa/linkr-bee),
-      Apache-2.0. Baseline commit d9b2e00. See linkr-bee/LICENSE.
+  Linkr Bee (https://github.com/radxa/linkr-bee), baseline d9b2e00,
+      Apache-2.0.  This project contains the patched web front-end under
+      linkr-bee/web/, linkr-bee/snapshot/web/ and linkr-bee/patches/.  The
+      ESP32/Zephyr firmware sources are NOT copied; linkr-bee/a7/linkr_ble.c
+      and linkr-bee/a7/linkr-bee-daemon are an independent V851S
+      implementation of the same GATT services, UUIDs, management command set
+      and Reliable UART framing.  See linkr-bee/LICENSE.
 
   linkr-bee/web/vendor/xterm, vendor/addon-fit
       @xterm/xterm and @xterm/addon-fit, MIT. Licenses alongside the files.
@@ -43,12 +47,6 @@ Third-party components
       https://github.com/Novice-PG/zephyr (fork) or the corresponding pending
       upstream PR.  OpenAMP, libmetal and the NS16550 driver come from that
       Zephyr tree; their own licenses (BSD-3-Clause / Apache-2.0) apply.
-
-  linkr-bee web front-end
-      Baseline: https://github.com/radxa/linkr-bee, commit d9b2e00,
-      Apache-2.0 (copy in linkr-bee/LICENSE).  The full patched tree is
-      shipped under linkr-bee/web/ so the board needs no checkout; the
-      patches in linkr-bee/patches/ reproduce it from that commit.
 
   The Allwinner Tina SDK, vendor libraries, vendor firmware blobs, full flash
   images and chip datasheets are not included (Allwinner EULA).

@@ -70,7 +70,8 @@ A7 side, on the board (already installed by the board image):
 | Zephyr RTOS | `zephyrproject-rtos/zephyr` | `v4.5.0` | Apache-2.0 | no (dependency) |
 | V851S BSP (board, DTS, SoC glue) | `Novice-PG/zephyr` branch `v851s-e907-bsp` (fork of upstream) | `6ebcb271c` | Apache-2.0 | no (dependency) |
 | OpenAMP / libmetal | Zephyr module set | matched to v4.5.0 | BSD-3-Clause | no (dependency) |
-| Linkr Bee web terminal | `radxa/linkr-bee` | `d9b2e00` | Apache-2.0 | yes (`linkr-bee/web`, patches, snapshot) |
+| Linkr Bee (project) | `radxa/linkr-bee` | `d9b2e00` | Apache-2.0 | web tree, patches, snapshot; A7 side is an independent implementation of the same services |
+| Linkr Bee ESP32/Zephyr firmware | `radxa/linkr-bee` | `d9b2e00` | Apache-2.0 | **no** (not vendored) |
 | Vendored web libs | npm packages (xterm, marked, DOMPurify, JSZip, esptool-js, agent runtime) | see `linkr-bee/web/vendor/README.md` | MIT / Apache-2.0 / MPL-2.0 / GPL-3.0-or-MIT | yes |
 | Fonts | BabelStone / Linkr legacy font | see `linkr-bee/web/fonts/` | SIL OFL 1.1 | yes |
 | E907 app, daemon, GATT server, init scripts | this project | — | Apache-2.0 | yes |
@@ -88,9 +89,13 @@ not redistributable.
 
 - `src/`, `tools/`, `linkr-bee/a7/linkr_ble.c`, `linkr-bee/a7/linkr-bee-daemon`:
   original work, Apache-2.0 (see `LICENSE`).
-- `linkr-bee/web/`, `linkr-bee/snapshot/web/`, `linkr-bee/patches/`: derived
-  from [radxa/linkr-bee](https://github.com/radxa/linkr-bee), Apache-2.0; see
-  `linkr-bee/LICENSE` and the per-package licenses under
+- Linkr Bee: [radxa/linkr-bee](https://github.com/radxa/linkr-bee), baseline
+  `d9b2e00`, Apache-2.0.  `linkr-bee/web/`, `snapshot/web/` and `patches/` are
+  the patched front-end from that project.  The ESP32/Zephyr firmware sources
+  are **not** copied here; `linkr-bee/a7/linkr_ble.c` and
+  `linkr-bee/a7/linkr-bee-daemon` are an independent V851S implementation of
+  the same GATT services, UUIDs, management commands and Reliable UART
+  framing.  See `linkr-bee/LICENSE` and the per-package licenses under
   `linkr-bee/web/vendor/` and `linkr-bee/web/fonts/`.
 - `linkr-ble` binary in `linkr-bee/a7/` is built from `linkr_ble.c` here.
 
