@@ -48,6 +48,10 @@ docs/
   Reliable UART v1), LAN session tickets, Wi-Fi control via `wctl`
 - Diagnostics: `@i?` reports firmware version, uptime, live UART ring fill and
   drop counters, Wi-Fi and upload state; the LAN page queries it on connect
+- BLE is one central at a time: the XR829 controller does not transmit
+  advertising while a connection is active (the HCI enable command succeeds
+  but nothing appears on air).  Extra terminals can use the LAN/WSS endpoint,
+  which supports several clients at once.
 
 ## Quick start
 

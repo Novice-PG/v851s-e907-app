@@ -138,6 +138,14 @@ NUS at MTU 23 still delivers every byte (measured 32768/32768); the Reliable
 path is confirmed to frame correctly, but its real speed depends on the
 central's indication round-trip (the phone app confirms immediately).
 
+### BLE multi-connection
+
+The X1/ESP32 firmware can keep advertising while connected and accepts two
+centrals.  The XR829 on the V851S cannot: with one LE link active,
+`LE Set Advertise Enable` returns success and the AD data is accepted, but a
+second central never sees the board.  BLE is therefore limited to one central
+at a time; the LAN/WSS endpoint is the multi-client path.
+
 ### Remaining limitations
 
 1. A target device that itself prints a line starting with `LINKRCFG ` is

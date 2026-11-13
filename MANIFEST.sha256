@@ -2,7 +2,7 @@
 8abcad5451f5aa3f720a830abc992618  ./docs/BUILD.md
 93574dc2539ea5922f04f52429a37951  ./docs/DEPLOY.md
 00b032eef2ba1855120bd499cf82680c  ./docs/PROTOCOL.md
-dce73e99fffa892ccaddecb2524ea001  ./docs/REVIEW.md
+d9b35f74b6e12cd1cc93fc739f144b24  ./docs/REVIEW.md
 41e41bc6c09c4de399d4cf8ce2e9c872  ./firmware/zephyr_e907.elf
 0161914421a5a78daf25de7fbfa28571  ./.gitignore
 fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
@@ -134,8 +134,8 @@ d7aaaef27ff18a0e8deff9b29439090e  ./linkr-bee/web/vendor/xterm/xterm.js
 be51d01a17648fe7652c7527d3f56f25  ./linkr-bee/web/window.css
 388843da39f6297b0b5fb3b8ad88416d  ./NOTICE
 24acb459c696faa2c0b17a94b5e4438e  ./prj.conf
-0e8cccb9736e1f6b7aa9ecade3dce30d  ./README.md
-099ac3dd56cd51ad9e3f9247bfb3b67c  ./README.zh-CN.md
+7db167d24cd41e4102b06550d17014b6  ./README.md
+b2b4b20f228b7d87299d7e9b7b12a40e  ./README.zh-CN.md
 fb90da9beaeb3984de9ca7de6ac49f1b  ./src/board_early.c
 615ba3bb29442712a176bbc272377bae  ./src/linkr_bridge.c
 77e3ffa8bd047b39c2df80286c58dee4  ./src/linkr_bridge.h
