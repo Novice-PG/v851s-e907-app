@@ -38,6 +38,10 @@ MAX_CLIENTS = 4
 OWNER_IDLE_SECONDS = 3.0
 MAX_FRAME = 1 << 20
 
+# Control replies the E907 may put on the rpmsg endpoint; they are stripped
+# from the serial stream and never reach a client.
+CTL_PREFIXES = (b"LINKRCFG ", b"LINKRSTAT ")
+
 # Unix socket protocol shared with /usr/bin/linkr-ble (see linkr_ble.c):
 #   type(1) length(2, LE) payload
 BLE_SOCK_PATH = "/var/run/linkr-bee.sock"
@@ -369,6 +373,16 @@ def _local_ip():
         except OSError:
             continue
     return "0.0.0.0"
+
+
+def _ctl_prefix_index(data):
+    """Earliest control-reply prefix in `data`, or -1."""
+    best = -1
+    for prefix in CTL_PREFIXES:
+        idx = data.find(prefix)
+        if idx >= 0 and (best < 0 or idx < best):
+            best = idx
+    return best
 
 
 def _read_text(path, limit=4096):
@@ -737,6 +751,8 @@ class Session:
         self._ctl_pending = None
         self._ctl_waiting = False
         self._ctl_lock = threading.Lock()
+        self._stat_cache = None
+        self._stat_at = 0.0
         self.upload_bytes = 0
 
     # -- rpmsg RX: split control replies from target serial data -----------
@@ -762,7 +778,7 @@ class Session:
             # target output in the same rpmsg message.  While a request is
             # in flight, split at the first control prefix so the reply is
             # not shown to clients (and does not time out the request).
-            idx = data.find(b"LINKRCFG ")
+            idx = _ctl_prefix_index(data)
             if idx < 0:
                 self._deliver(data)
                 return
@@ -786,7 +802,7 @@ class Session:
             self._deliver(rest)
             return
 
-        if data.startswith(b"LINKRCFG "):
+        if data.startswith(CTL_PREFIXES):
             idx = data.find(b"\n")
             if idx < 0:
                 self._ctl_pending = bytearray(data)
@@ -1048,8 +1064,8 @@ class Session:
                 return "OK target=%s\r\n" % value
         return None
 
-    def _send_uart_ctl(self, payload, timeout=4.0):
-        """Send a `LINKRCFG` line to the E907 and wait for its reply."""
+    def _send_bridge_ctl(self, line, timeout):
+        """Send one control line to the E907 and wait for its reply."""
         if self.bridge is None:
             return None
         with self._ctl_lock:
@@ -1058,16 +1074,39 @@ class Session:
             self._ctl_waiting = True
             try:
                 try:
-                    self.bridge.send(
-                        ("LINKRCFG %s\n" % payload).encode("ascii"))
+                    self.bridge.send((line + "\n").encode("ascii"))
                 except OSError as exc:
-                    log("uart control send failed: %s" % exc)
+                    log("bridge control send failed: %s" % exc)
                     return None
                 if not self._ctl_event.wait(timeout):
                     return None
                 return self._ctl_reply
             finally:
                 self._ctl_waiting = False
+
+    def _send_uart_ctl(self, payload, timeout=4.0):
+        """Send a `LINKRCFG` line to the E907 and wait for its reply."""
+        return self._send_bridge_ctl("LINKRCFG %s" % payload, timeout)
+
+    def _bridge_stat(self, timeout=1.0):
+        """Live ring occupancy/drop counters from the E907 (`LINKRSTAT`)."""
+        now = time.monotonic()
+        if self._stat_cache and now - self._stat_at < 2.0:
+            return self._stat_cache
+        reply = self._send_bridge_ctl("LINKRSTAT", timeout) or ""
+        match = re.match(r"LINKRSTAT rx=(\d+)/(\d+) tx=(\d+)/(\d+) "
+                         r"drop=(\d+)/(\d+)", reply)
+        if not match:
+            return self._stat_cache
+        stat = {
+            "rx_used": int(match.group(1)), "rx_size": int(match.group(2)),
+            "tx_used": int(match.group(3)), "tx_size": int(match.group(4)),
+            "rx_dropped": int(match.group(5)),
+            "tx_dropped": int(match.group(6)),
+        }
+        self._stat_cache = stat
+        self._stat_at = now
+        return stat
 
     def _uart_command(self, line):
         if line in ("@u?", "@uart?"):
@@ -1310,10 +1349,16 @@ class Session:
             peers = len(self.clients)
             uptime_ms = int((time.monotonic() - self.started) * 1000)
         connected, info = _wifi_status()
+        stat = self._bridge_stat() or {}
+        dropped = (stat.get("rx_dropped", 0) + stat.get("tx_dropped", 0))
         lines = [
             "@info fw version=%s zephyr=4.5.0\r\n" % FIRMWARE_VERSION,
             "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
-            "@info uart dropped=0 dropped_no_conn=0 buffer=0/4096\r\n",
+            "@info uart dropped=%d dropped_no_conn=0 buffer=%d/%d "
+            "tx=%d/%d tx_dropped=%d\r\n" % (
+                dropped, stat.get("rx_used", 0), stat.get("rx_size", 16384),
+                stat.get("tx_used", 0), stat.get("tx_size", 16384),
+                stat.get("tx_dropped", 0)),
             "@info wifi state=%s ip=%s\r\n" % (
                 "connected" if connected else "off",
                 info["ip"] or "down"),

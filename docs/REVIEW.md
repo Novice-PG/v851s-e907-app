@@ -97,6 +97,20 @@ considered verified. The protocol is unchanged.
    events (scan results, Wi-Fi state) are written as ordinary text frames the
    page already parses.
 
+### Diagnostics and buffering (2026-11-13)
+
+- The E907 rings were 4 KiB in each direction.  They are now **64 KiB**
+  (`.bss`, +120 KiB of the 4 MiB window; the image still uses only 180 KiB of
+  4 MiB and the ELF on NAND grows by ~1.6 KiB).  At 115200 that is ~5.7 s of
+  buffer, at 1.5 Mbaud ~437 ms, at 4 Mbaud ~164 ms.
+- `LINKRSTAT` reports the live ring fill and drop counters.  `@i?` in the
+  daemon now asks the E907 for them (2 s cache) instead of printing the
+  hard-coded `0/4096` and `dropped=0`.
+- The LAN page now auto-queries diagnostics, Wi-Fi state and the token as soon
+  as the WebSocket handshake completes, exactly like the BLE path; previously
+  `requestDiagnostics()` was a no-op outside BLE mode, so the panel stayed
+  empty until the user pressed "Refresh".
+
 ### Remaining limitations
 
 1. A target device that itself prints a line starting with `LINKRCFG ` is

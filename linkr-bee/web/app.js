@@ -2647,19 +2647,23 @@ function hasManagementCapability(capability) {
 }
 
 function requestDeviceState() {
-  if (!state.connected || state.mode !== "ble" || !state.mgmtReady) {
+  if (!state.connected) {
+    return Promise.resolve();
+  }
+  if (state.mode === "ble" && !state.mgmtReady) {
     return Promise.resolve();
   }
   const requests = [requestDiagnostics()];
-  if (hasManagementCapability(MGMT_CAP_WIFI)) {
+  const lan = state.mode === "ws";
+  if (lan || hasManagementCapability(MGMT_CAP_WIFI)) {
     requests.push(sendControl("@w?"));
   }
-  if (hasManagementCapability(MGMT_CAP_WEBSOCKET)) {
+  if (lan || hasManagementCapability(MGMT_CAP_WEBSOCKET)) {
     // "@s?" is the only place the bridge reports its LAN access token, and the
     // web UI has no other management-command entry point. Capturing it during
     // the BLE session means the token field is already filled when the user
     // switches to LAN mode. "@i?" diagnostics deliberately omit the token.
-    if (canSerialInput()) requests.push(sendControl("@s?"));
+    if (lan || canSerialInput()) requests.push(sendControl("@s?"));
   }
   return Promise.all(requests);
 }
@@ -5083,7 +5087,10 @@ async function restoreAuthorizedDevice() {
 }
 
 function requestDiagnostics() {
-  if (!state.connected || state.mode !== "ble" || !state.mgmtReady) {
+  if (!state.connected) {
+    return Promise.resolve();
+  }
+  if (state.mode === "ble" && !state.mgmtReady) {
     return Promise.resolve();
   }
   state.diagnostics = {};
@@ -5437,6 +5444,16 @@ async function sendControl(command, { returnResponse = false, quiet = false } = 
   if (!quiet) appendLine(
     `[control] ${sensitive ? `${command.slice(0, 2)}=<redacted>` : command}`,
   );
+  if (state.mode === "ws") {
+    // The LAN bridge accepts the same command language as the BLE Management
+    // Service; over WebSocket the commands are plain text frames.
+    const ws = state.ws;
+    if (!ws || ws.readyState !== 1) {
+      throw new Error("LAN bridge is not connected");
+    }
+    ws.send(command);
+    return Promise.resolve();
+  }
   if (state.mode !== "ble" || !state.mgmtReady) {
     throw new Error("Management characteristic is not ready");
   }
@@ -5951,6 +5968,11 @@ function connectWs(signal) {
       lanTokens.save();
       setConnected(true);
       appendLine("[ready]");
+      // Query firmware/diagnostics/Wi-Fi once, exactly like the BLE path, so
+      // the panels are populated without pressing "Refresh diagnostics".
+      requestDeviceState().catch((error) =>
+        appendLine(`[info] ${error.message}`),
+      );
       resolve();
     };
 

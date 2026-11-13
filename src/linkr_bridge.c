@@ -35,8 +35,12 @@
 LOG_MODULE_REGISTER(linkr_bridge, LOG_LEVEL_INF);
 
 #define UART_NODE        DT_NODELABEL(uart3)
-#define RX_RING_SIZE     4096
-#define TX_RING_SIZE     4096
+/* The E907 image uses ~57 KiB of its 4 MiB DRAM window, so the rings can be
+ * generous without trade-offs: 64 KiB holds ~5.7 s at 115200, ~437 ms at
+ * 1.5 Mbaud and ~164 ms at 4 Mbaud in each direction.  They are .bss, so the
+ * extra 120 KiB costs no NAND space in the firmware file. */
+#define RX_RING_SIZE     65536
+#define TX_RING_SIZE     65536
 #define RX_CHUNK         256
 #define RX_POLL_MS       20
 
@@ -59,6 +63,7 @@ static uint32_t bridge_dst;
 static atomic_t bridge_ready;
 static atomic_t uart_rx_total;
 static atomic_t uart_rx_dropped;
+static atomic_t uart_tx_dropped;
 
 static void rx_push(const uint8_t *buf, uint32_t len)
 {
@@ -407,6 +412,26 @@ int linkr_bridge_rpmsg_recv(struct rpmsg_endpoint *ept, const void *data,
 		return rpmsg_sendto(ept, reply, n, src);
 	}
 
+	/* "LINKRSTAT\n" reports the current ring occupancy and drop counters so
+	 * the A7 can show real numbers in @i? instead of constants. */
+	if (atomic_get(&bridge_ready) && len >= 9 &&
+	    !memcmp(p, "LINKRSTAT", 9)) {
+		char reply[128];
+		int n = snprintk(reply, sizeof(reply),
+				 "LINKRSTAT rx=%u/%u tx=%u/%u drop=%u/%u\n",
+				 (unsigned int)ring_buf_size_get(&uart_rx_ring),
+				 (unsigned int)RX_RING_SIZE,
+				 (unsigned int)ring_buf_size_get(&uart_tx_ring),
+				 (unsigned int)TX_RING_SIZE,
+				 (unsigned int)atomic_get(&uart_rx_dropped),
+				 (unsigned int)atomic_get(&uart_tx_dropped));
+
+		if (n < 0) {
+			return n;
+		}
+		return rpmsg_sendto(ept, reply, n, src);
+	}
+
 	if (atomic_get(&bridge_ready) && len > LINKRCFG_PREFIX_LEN &&
 	    !memcmp(p, LINKRCFG_PREFIX, LINKRCFG_PREFIX_LEN)) {
 		char line[96];
@@ -454,6 +479,7 @@ int linkr_bridge_rpmsg_recv(struct rpmsg_endpoint *ept, const void *data,
 			if (k_sem_take(&uart_tx_space_sem, K_MSEC(100)) != 0) {
 				LOG_WRN("UART TX stalled, dropped %u bytes",
 					(unsigned int)left);
+				atomic_add(&uart_tx_dropped, left);
 				break;
 			}
 			put = ring_buf_put(&uart_tx_ring, p, left);
