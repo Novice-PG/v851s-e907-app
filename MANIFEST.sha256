@@ -8,11 +8,11 @@ a3b894f43c91276581e9d3686fd8dd17  ./docs/DEPLOY.md
 fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 911c32748a9f2cfb20196cbf3533a147  ./linkr-bee/a7/ble-adv-data.py
 b76bcb7da1a65ea84c349c705ff6e976  ./linkr-bee/a7/certs/san.cnf
-e7e7636046db61c17aa76c4870652958  ./linkr-bee/a7/linkr-bee-daemon
+89f15ae2bb73e75e692309939538b29d  ./linkr-bee/a7/linkr-bee-daemon
 92d19f5162ae37931df15ae5fb4e181c  ./linkr-bee/a7/linkr-ble
 fbc4e82cd81963fbaaf5bdbc683ee03a  ./linkr-bee/a7/linkr_ble.c
 e7172a5b9d45422f48a36106f7addd87  ./linkr-bee/a7/main.conf
-4f81ad60b732a8a05316ec1668068ae2  ./linkr-bee/a7/__pycache__/linkr-bee-daemoncpython-313.pyc
+c8648320cb553936b071373b18b04c8d  ./linkr-bee/a7/__pycache__/linkr-bee-daemoncpython-313.pyc
 79a3ef660b183127e4c048876ae83a59  ./linkr-bee/a7/S53linkr
 14adc63f7efe61191e12ce6b3049f61e  ./linkr-bee/a7/S54bluetooth
 0baf3ba5ebbe8146ac114737a3c8abd2  ./linkr-bee/a7/S99linkrbee.legacy

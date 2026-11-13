@@ -814,7 +814,11 @@ class Session:
                 pass
 
     def emit_event(self, client, reqid, text, final=False, error=False):
-        if client is None or reqid == 0:
+        # LAN clients use reqid=0: they receive async results as plain text
+        # frames.  BLE needs a non-zero request id to route the event.
+        if client is None:
+            return
+        if reqid == 0 and getattr(client, "transport", "") == "ble":
             return
         flags = (0x0001 if final else 0) | (0x0002 if error else 0)
         try:
