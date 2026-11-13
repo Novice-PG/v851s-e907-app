@@ -88,5 +88,6 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
   -config linkr-bee/a7/certs/san.cnf -extensions v3
 ```
 
-Copy both into `/usr/share/linkr-bee/certs/` on the board and start the daemon
-with `--tls-port 443` (instead of 0).
+Copy both into `/usr/share/linkr-bee/certs/` on the board. `S53linkr` then
+starts the daemon with `--tls-port 8443` automatically; without the pair it
+passes 0 and only HTTP is served. Set `TLS_PORT` to change the port.

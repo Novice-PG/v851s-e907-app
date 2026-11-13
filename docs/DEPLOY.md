@@ -83,36 +83,44 @@ A failed start leaves the state at `offline (0)`; the old firmware is still in
 `/mnt/UDISK/backup-*/` if you kept a copy. `cat $RP/trace0` shows the RAM
 console.
 
-## HTTP or self-signed HTTPS?
+## HTTPS (self-signed, port 8443)
 
-The board serves the terminal over **HTTP (port 80)** by default, and that is
-the recommended setup for a LAN bridge:
+The board serves the page on both listeners:
 
-- the daemon binds `0.0.0.0:80` before Wi-Fi has an address, so the page is
-  reachable as soon as `wlan0` gets an IP;
-- BLE is handled natively by `linkr-ble` (GATT), not by Web Bluetooth, so the
-  page does not need a secure context for its main feature;
-- the two features that do need a secure context now have fallbacks: the
-  `crypto.randomUUID` polyfill and the pure-JS SHA-256 in
-  `web/sha256_fallback.js` (download verification, task fingerprints);
-- a self-signed certificate triggers a warning on every phone/laptop, and
-  `wss://` additionally requires accepting the certificate before the
-  WebSocket connects -- the default URL is `ws://<host>/ws`.
+| Listener | Purpose |
+|---|---|
+| `http://<board>/` (80) | redirects page requests to HTTPS; `/ws` still works over plain `ws://` for scripts |
+| `https://<board>:8443/` | the page, `wss://<board>:8443/ws`, secure context (Web Bluetooth) |
 
-Use HTTPS only when you specifically need browser Web Bluetooth (desktop
-Chromium) or other secure-context-only APIs. Then:
+HTTPS is enabled automatically by `S53linkr` when both
+`/usr/share/linkr-bee/certs/linkr-bee.crt` and `.key` exist; without them the
+daemon stays HTTP-only. The certificate template
+(`linkr-bee/a7/certs/san.cnf`) already contains the board's addresses.
+
+Generate a certificate per board (the key is never committed):
 
 ```sh
-# on the host, with the template from this repository
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
   -keyout linkr-bee.key -out linkr-bee.crt \
   -config linkr-bee/a7/certs/san.cnf -extensions v3
-# copy both to /usr/share/linkr-bee/certs/ on the board
-# and change S53linkr's --tls-port 0 to --tls-port 443
-# finally open https://<board-ip>/ and enter wss://<board-ip>/ws explicitly
+install -d -m 700 /usr/share/linkr-bee/certs        # on the board
+install -m 644 linkr-bee.crt /usr/share/linkr-bee/certs/
+install -m 600 linkr-bee.key /usr/share/linkr-bee/certs/
+/etc/init.d/S53linkr restart
 ```
 
-Do not commit the generated key; each board gets its own.
+Because the certificate is self-signed, the browser shows a warning the first
+time; accept it once per device. Open **`https://<board-ip>:8443/`** and leave
+the device field at the default (the board fills in its own IP). The page
+derives `wss://<board-ip>:8443/ws` from its own origin, so a bare IP is enough;
+a full `wss://...` URL is also accepted.
+
+On Linux Chromium, Web Bluetooth additionally needs
+`chrome://flags/#enable-experimental-web-platform-features` and a restart.
+
+If you ever want HTTP-only again, remove the certificate (or set
+`TLS_PORT=0` before `S53linkr start`); plain `http://<board>/` then works as
+before.
 
 ## Verifying
 

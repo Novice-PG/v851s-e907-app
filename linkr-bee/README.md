@@ -9,7 +9,7 @@ and `radxa/linkr-bee` stay untouched.
 | `a7/linkr-bee-daemon` | `/usr/bin/linkr-bee-daemon` | HTTP/WebSocket ↔ rpmsg daemon (Python 3, stdlib) |
 | `a7/linkr-ble` | `/usr/bin/linkr-ble` | BlueZ GATT server (NUS + Management v1 + Reliable UART v1) |
 | `a7/linkr_ble.c` | — | source of `linkr-ble` |
-| `a7/S53linkr` | `/etc/init.d/S53linkr` | starts the LAN/WebSocket daemon |
+| `a7/S53linkr` | `/etc/init.d/S53linkr` | starts the LAN/WebSocket daemon (HTTP 80 + HTTPS 8443 when a cert exists) |
 | `a7/S54bluetooth` | `/etc/init.d/S54bluetooth` | XR829 BT + bluetoothd + linkr-ble |
 | `a7/main.conf` | `/etc/bluetooth/main.conf` | BlueZ config (`Channels = 1`) |
 | `a7/ble-adv-data.py` | `/usr/bin/ble-adv-data.py` | pushes LE ADV/SCAN_RSP the 4.9 kernel drops |

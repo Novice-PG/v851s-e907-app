@@ -5851,6 +5851,28 @@ function scheduleAutoReconnect() {
   scheduleNextAutoReconnect(0);
 }
 
+/* Build the WebSocket URL for the device field.
+ *
+ * When the page itself is served over HTTPS (the self-signed 8443 listener),
+ * a bare `192.168.0.121` must become `wss://192.168.0.121:8443/ws`; otherwise
+ * the browser blocks it as mixed content and the connection stays grey.  The
+ * page's own origin already carries the right scheme and port, so reuse it
+ * whenever the field names the same host. */
+function websocketUrl(host) {
+  if (/^wss?:\/\//.test(host)) return host;
+  const securePage = location.protocol === "https:";
+  let target = host;
+  if (securePage) {
+    if (host === location.hostname || host === location.host) {
+      target = location.host;
+    } else if (!host.includes(":") && location.port) {
+      target = `${host}:${location.port}`;
+    }
+    return `wss://${target}/ws`;
+  }
+  return `ws://${target}/ws`;
+}
+
 function connectWs(signal) {
   return new Promise((resolve, reject) => {
     const host = elements.wsHostInput.value.trim();
@@ -5867,7 +5889,7 @@ function connectWs(signal) {
     }
     clearWsErrors();
     saveSetting(WS_HOST_KEY, host);
-    const url = /^wss?:\/\//.test(host) ? host : `ws://${host}/ws`;
+    const url = websocketUrl(host);
     const ws = new WebSocket(url);
     let opened = false;
     let settled = false;

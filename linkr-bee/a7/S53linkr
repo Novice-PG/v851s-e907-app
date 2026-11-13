@@ -1,8 +1,10 @@
 #!/bin/sh
 # Linkr Bee LAN bridge (A7 side).
 #
-# Serves the Linkr Bee web terminal on port 80 and bridges ws://<board>/ws to
-# the E907 UART3 link over /dev/rpmsg_ctrl0.  See linkr-bee-daemon.
+# Serves the Linkr Bee web terminal on port 80 and, when a certificate is
+# installed, also on HTTPS port 8443 (Web Bluetooth needs a secure context).
+# Bridges ws(s)://<board>/ws to the E907 UART3 link over /dev/rpmsg_ctrl0.
+# See linkr-bee-daemon.
 #
 # The daemon binds 0.0.0.0, so it can start before Wi-Fi has an address; the
 # page simply becomes reachable once wlan0 gets an IP.
@@ -12,6 +14,8 @@ WEBROOT=/usr/share/linkr-bee/web
 PIDFILE=/var/run/linkr-bee.pid
 LOGFILE=/var/log/linkr-bee.log
 PORT=80
+TLS_PORT=${TLS_PORT:-8443}
+CERT_DIR=/usr/share/linkr-bee/certs
 
 start() {
 	mkdir -p /var/run
@@ -20,13 +24,19 @@ start() {
 		echo "linkr-bee: already running (pid $(cat "$PIDFILE"))"
 		return 0
 	fi
+	# The private key is generated per board and never shipped.  Without a
+	# certificate the daemon runs plain HTTP only.
+	tls=0
+	if [ -f "$CERT_DIR/linkr-bee.crt" ] && [ -f "$CERT_DIR/linkr-bee.key" ]; then
+		tls=$TLS_PORT
+	fi
 	echo -n "Starting linkr-bee: "
-	nohup python3 -u "$DAEMON" --port "$PORT" --tls-port 0 \
+	nohup python3 -u "$DAEMON" --port "$PORT" --tls-port "$tls" \
 		--web-root "$WEBROOT" >>"$LOGFILE" 2>&1 &
 	echo $! >"$PIDFILE"
 	sleep 1
 	if kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-		echo "ok (pid $(cat "$PIDFILE"), port $PORT)"
+		echo "ok (pid $(cat "$PIDFILE"), port $PORT, tls $tls)"
 	else
 		echo "failed, see $LOGFILE"
 		rm -f "$PIDFILE"

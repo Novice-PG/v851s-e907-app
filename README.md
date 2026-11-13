@@ -46,7 +46,10 @@ west build -b yuzuki_lizard_v851s/e907 apps/e907_bringup
 
 A7 side, on the board (already installed by the board image):
 `/usr/bin/linkr-bee-daemon`, `/usr/bin/linkr-ble`, `/etc/init.d/S53linkr`,
-`/etc/init.d/S54bluetooth`. See [docs/BUILD.md](docs/BUILD.md) to rebuild and
+`/etc/init.d/S54bluetooth`. With a per-board certificate in
+`/usr/share/linkr-bee/certs/` the page is served at
+`https://<board>:8443/` (self-signed; see `docs/DEPLOY.md`), otherwise at
+`http://<board>/`. See [docs/BUILD.md](docs/BUILD.md) to rebuild and
 [docs/DEPLOY.md](docs/DEPLOY.md) to update a running board.
 
 ## Scope and licensing

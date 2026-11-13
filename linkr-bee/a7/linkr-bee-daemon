@@ -1656,7 +1656,8 @@ def serve_file(conn, web_root, url_path):
     _http_response(conn, "200 OK", body, MIME.get(ext, "application/octet-stream"))
 
 
-def handle_connection(conn, addr, web_root, session, redirect_https=False):
+def handle_connection(conn, addr, web_root, session, redirect_https=False,
+                      tls_port=443):
     try:
         request = _read_request(conn)
         if request is None:
@@ -1678,9 +1679,15 @@ def handle_connection(conn, addr, web_root, session, redirect_https=False):
             host = headers.get("host", "")
             if host.endswith(":80"):
                 host = host[:-3]
+            # Drop any other port too: the redirect points at the TLS
+            # listener, which is not necessarily 443.
+            host = host.split(":")[0]
             if not host:
                 host = addr[0]
-            location = "https://%s%s" % (host, path)
+            if tls_port and tls_port != 443:
+                location = "https://%s:%d%s" % (host, tls_port, path)
+            else:
+                location = "https://%s%s" % (host, path)
             _http_response(conn, "301 Moved Permanently", b"",
                            "text/plain; charset=utf-8",
                            "Location: %s\r\n" % location)
@@ -1824,7 +1831,8 @@ def main():
         except OSError:
             pass
         threading.Thread(target=handle_connection,
-                         args=(conn, addr, args.web_root, session, tls_enabled),
+                         args=(conn, addr, args.web_root, session, tls_enabled,
+                               args.tls_port),
                          daemon=True).start()
 
 
