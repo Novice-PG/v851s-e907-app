@@ -35,8 +35,23 @@ Third-party components
   linkr-bee/web/vendor/macaron-cursors  CC-BY-4.0
   linkr-bee/web/fonts/                  SIL Open Font License 1.1 (OFL.txt)
 
-  The Zephyr application is built against Zephyr RTOS (Apache-2.0) and uses
-  its OpenAMP/rpmsg and NS16550 drivers; no Zephyr sources are vendored here.
+  Zephyr RTOS
+      Upstream: https://github.com/zephyrproject-rtos/zephyr, tag v4.5.0,
+      Apache-2.0.  The application is an out-of-tree Zephyr app and does NOT
+      vendor Zephyr sources.  It needs the V851S BSP branch
+      "v851s-e907-bsp" (based on v4.5.0, commit 6ebcb271c) from
+      https://github.com/Novice-PG/zephyr (fork) or the corresponding pending
+      upstream PR.  OpenAMP, libmetal and the NS16550 driver come from that
+      Zephyr tree; their own licenses (BSD-3-Clause / Apache-2.0) apply.
+
+  linkr-bee web front-end
+      Baseline: https://github.com/radxa/linkr-bee, commit d9b2e00,
+      Apache-2.0 (copy in linkr-bee/LICENSE).  The full patched tree is
+      shipped under linkr-bee/web/ so the board needs no checkout; the
+      patches in linkr-bee/patches/ reproduce it from that commit.
+
+  The Allwinner Tina SDK, vendor libraries, vendor firmware blobs, full flash
+  images and chip datasheets are not included (Allwinner EULA).
 
 Not included
 ------------

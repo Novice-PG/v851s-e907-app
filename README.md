@@ -22,7 +22,7 @@ src/, prj.conf, CMakeLists.txt   E907 Zephyr application (rpmsg + UART3 bridge)
 firmware/zephyr_e907.elf         built from src/ (what remoteproc loads)
 tools/                           host-side rpmsg smoke test and benchmark
 linkr-bee/
-├── patches/                     three web patches on top of linkr-bee d9b2e00
+├── patches/                     five web patches on top of linkr-bee d9b2e00
 ├── snapshot/web/                the patched web files (md5-pinned)
 ├── web/                         full web terminal as shipped on the board
 ├── a7/                          A7 daemon, GATT server, init scripts, config
@@ -52,7 +52,7 @@ docs/
 E907 firmware (needs a Zephyr checkout with the `v851s` BSP):
 
 ```sh
-west build -b yuzuki_lizard_v851s/e907 apps/e907_bringup
+west build -b v851s_e907 apps/e907_bringup
 ```
 
 A7 side, on the board (already installed by the board image):
@@ -62,6 +62,21 @@ A7 side, on the board (already installed by the board image):
 `https://<board>:8443/` (self-signed; see `docs/DEPLOY.md`), otherwise at
 `http://<board>/`. See [docs/BUILD.md](docs/BUILD.md) to rebuild and
 [docs/DEPLOY.md](docs/DEPLOY.md) to update a running board.
+
+## Provenance
+
+| Component | Upstream / origin | Revision | License | In this repo |
+|---|---|---|---|---|
+| Zephyr RTOS | `zephyrproject-rtos/zephyr` | `v4.5.0` | Apache-2.0 | no (dependency) |
+| V851S BSP (board, DTS, SoC glue) | `Novice-PG/zephyr` branch `v851s-e907-bsp` (fork of upstream) | `6ebcb271c` | Apache-2.0 | no (dependency) |
+| OpenAMP / libmetal | Zephyr module set | matched to v4.5.0 | BSD-3-Clause | no (dependency) |
+| Linkr Bee web terminal | `radxa/linkr-bee` | `d9b2e00` | Apache-2.0 | yes (`linkr-bee/web`, patches, snapshot) |
+| Vendored web libs | npm packages (xterm, marked, DOMPurify, JSZip, esptool-js, agent runtime) | see `linkr-bee/web/vendor/README.md` | MIT / Apache-2.0 / MPL-2.0 / GPL-3.0-or-MIT | yes |
+| Fonts | BabelStone / Linkr legacy font | see `linkr-bee/web/fonts/` | SIL OFL 1.1 | yes |
+| E907 app, daemon, GATT server, init scripts | this project | — | Apache-2.0 | yes |
+
+Nothing from the Allwinner Tina SDK, vendor libraries/firmware, full flash
+images or chip datasheets is included.
 
 ## Scope and licensing
 

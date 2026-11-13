@@ -7,7 +7,7 @@ upstreamable work.
 
 ## What the adaptation actually changes
 
-### Web front-end (generic fixes, three patches)
+### Web front-end (generic fixes, five patches)
 
 1. **`crypto.randomUUID` fallback** — `randomUUID` is only exposed in secure
    contexts, but the LAN bridge is normally served over plain
