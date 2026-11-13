@@ -12,7 +12,7 @@ b76bcb7da1a65ea84c349c705ff6e976  ./linkr-bee/a7/certs/san.cnf
 55ddc1fef383198e87e26f245379b654  ./linkr-bee/a7/linkr-bee-daemon
 92d19f5162ae37931df15ae5fb4e181c  ./linkr-bee/a7/linkr-ble
 107ff7c08d6f3c2fe67b849f82668d1e  ./linkr-bee/a7/linkr_ble.c
-e7172a5b9d45422f48a36106f7addd87  ./linkr-bee/a7/main.conf
+a2e189861efdc8e00741a9578c49ffb2  ./linkr-bee/a7/main.conf
 ba9670d3a404f424308d1e944a2d94a5  ./linkr-bee/a7/__pycache__/linkr-bee-daemoncpython-313.pyc
 305b61f36fc3012433037db0435fa254  ./linkr-bee/a7/S53linkr
 14adc63f7efe61191e12ce6b3049f61e  ./linkr-bee/a7/S54bluetooth
