@@ -375,24 +375,40 @@ static void append_mgmt_event(guint32 reqid, guint16 flags, const char *text)
 	append_mgmt_msg(3, reqid, flags | 0x0004 /* ASYNC */, text);
 }
 
-static void send_frame(int fd, guint8 type, const void *data, gsize len)
+static gboolean write_all(int fd, const void *buf, gsize len)
 {
-	guint8 hdr[3];
+	const guint8 *p = buf;
 	gsize off = 0;
 
-	hdr[0] = type;
-	hdr[1] = len & 0xff;
-	hdr[2] = (len >> 8) & 0xff;
-	if (write(fd, hdr, sizeof(hdr)) != (ssize_t)sizeof(hdr)) {
-		return;
-	}
 	while (off < len) {
-		ssize_t n = write(fd, (const guint8 *)data + off, len - off);
+		ssize_t n = write(fd, p + off, len - off);
+
+		if (n < 0 && errno == EINTR) {
+			continue;
+		}
 		if (n <= 0) {
-			return;
+			return FALSE;
 		}
 		off += n;
 	}
+	return TRUE;
+}
+
+static void send_frame(int fd, guint8 type, const void *data, gsize len)
+{
+	guint8 hdr[3];
+
+	if (len > 0xffff) {
+		logmsg("frame too large (%zu), dropped", len);
+		return;
+	}
+	hdr[0] = type;
+	hdr[1] = len & 0xff;
+	hdr[2] = (len >> 8) & 0xff;
+	if (!write_all(fd, hdr, sizeof(hdr))) {
+		return;
+	}
+	(void)write_all(fd, data, len);
 }
 
 static void mgmt_dispatch(const guint8 *payload, gsize len)
@@ -414,88 +430,112 @@ static void mgmt_dispatch(const guint8 *payload, gsize len)
 
 static void mgmt_write(const guint8 *data, gsize len)
 {
-	if (mgmt_rx_len == 0) {
-		/* First fragment must carry the complete 12-byte header. */
-		if (len < 12) {
+	while (len > 0) {
+		gsize take;
+
+		if (mgmt_rx_len == 0) {
+			/* The first fragment must carry the complete 12-byte
+			 * header; BLE writes are at least 20 bytes, so this is
+			 * not a practical limitation. */
+			if (len < 12) {
+				return;
+			}
+			if (data[0] != 'L' || data[1] != 'K' || data[2] != 1 ||
+			    data[3] != 1) {
+				return;
+			}
+			mgmt_rx_reqid = data[4] | (data[5] << 8) |
+					(data[6] << 16) | (data[7] << 24);
+			mgmt_rx_need = data[8] | (data[9] << 8);
+			if (mgmt_rx_need == 0 ||
+			    mgmt_rx_need > MGMT_MAX_PAYLOAD ||
+			    mgmt_rx_reqid == 0) {
+				return;
+			}
+			mgmt_rx_got = 0;
+			mgmt_rx_len = 12;
+			memcpy(mgmt_rx_buf, data, 12);
+			data += 12;
+			len -= 12;
+			continue;
+		}
+
+		take = MIN(len, (gsize)(mgmt_rx_need - mgmt_rx_got));
+		if (mgmt_rx_len + take > sizeof(mgmt_rx_buf)) {
+			mgmt_rx_len = 0;
+			mgmt_rx_got = 0;
 			return;
 		}
-		if (data[0] != 'L' || data[1] != 'K' || data[2] != 1 ||
-		    data[3] != 1) {
-			return;
+		memcpy(mgmt_rx_buf + mgmt_rx_len, data, take);
+		mgmt_rx_len += take;
+		mgmt_rx_got += take;
+		data += take;
+		len -= take;
+		if (mgmt_rx_got >= mgmt_rx_need) {
+			mgmt_dispatch(mgmt_rx_buf + 12, mgmt_rx_need);
+			mgmt_rx_len = 0;
+			mgmt_rx_got = 0;
 		}
-		mgmt_rx_reqid = data[4] | (data[5] << 8) | (data[6] << 16) |
-				(data[7] << 24);
-		mgmt_rx_need = data[8] | (data[9] << 8);
-		if (mgmt_rx_need == 0 || mgmt_rx_need > MGMT_MAX_PAYLOAD ||
-		    mgmt_rx_reqid == 0) {
-			return;
-		}
-		mgmt_rx_got = 0;
-		mgmt_rx_len = 12;
-		memcpy(mgmt_rx_buf, data, 12);
-		data += 12;
-		len -= 12;
-	}
-	if (mgmt_rx_len + len > sizeof(mgmt_rx_buf)) {
-		mgmt_rx_len = 0;
-		return;
-	}
-	memcpy(mgmt_rx_buf + mgmt_rx_len, data, len);
-	mgmt_rx_len += len;
-	mgmt_rx_got += len;
-	if (mgmt_rx_got >= mgmt_rx_need) {
-		mgmt_dispatch(mgmt_rx_buf + 12, mgmt_rx_need);
-		mgmt_rx_len = 0;
-		mgmt_rx_got = 0;
 	}
 }
 
 static void rel_rx_write(const guint8 *data, gsize len)
 {
-	if (rel_rx_len == 0) {
-		if (len < 12) {
-			return;
-		}
-		if (data[0] != 'L' || data[1] != 'R' || data[2] != 1) {
-			return;
-		}
-		rel_rx_seq = data[4] | (data[5] << 8) | (data[6] << 16) |
-			     (data[7] << 24);
-		rel_rx_need = data[8] | (data[9] << 8);
-		if (rel_rx_need == 0 || rel_rx_need > 232) {
-			return;
-		}
-		rel_rx_got = 0;
-		rel_rx_len = 12;
-		memcpy(rel_rx_buf, data, 12);
-		data += 12;
-		len -= 12;
-	}
-	if (rel_rx_len + len > sizeof(rel_rx_buf)) {
-		rel_rx_len = 0;
-		return;
-	}
-	memcpy(rel_rx_buf + rel_rx_len, data, len);
-	rel_rx_len += len;
-	rel_rx_got += len;
-	if (rel_rx_got >= rel_rx_need) {
-		guint32 prev = rel_rx_expected - 1;
+	while (len > 0) {
+		gsize take;
 
-		if (rel_rx_seq == rel_rx_expected) {
-			if (sock_fd >= 0) {
-				send_frame(sock_fd, FRAME_DATA, rel_rx_buf + 12,
-					   rel_rx_need);
+		if (rel_rx_len == 0) {
+			if (len < 12) {
+				return;
 			}
-			rel_rx_expected++;
-			if (rel_rx_expected == 0) {
-				rel_rx_expected = 1;
+			if (data[0] != 'L' || data[1] != 'R' ||
+			    data[2] != 1) {
+				return;
 			}
-		} else if (rel_rx_seq != prev) {
-			logmsg("reliable RX sequence gap: expected %u got %u",
-			       rel_rx_expected, rel_rx_seq);
+			rel_rx_seq = data[4] | (data[5] << 8) |
+				     (data[6] << 16) | (data[7] << 24);
+			rel_rx_need = data[8] | (data[9] << 8);
+			if (rel_rx_need == 0 || rel_rx_need > 232) {
+				return;
+			}
+			rel_rx_got = 0;
+			rel_rx_len = 12;
+			memcpy(rel_rx_buf, data, 12);
+			data += 12;
+			len -= 12;
+			continue;
 		}
-		rel_rx_len = 0;
-		rel_rx_got = 0;
+
+		take = MIN(len, (gsize)(rel_rx_need - rel_rx_got));
+		if (rel_rx_len + take > sizeof(rel_rx_buf)) {
+			rel_rx_len = 0;
+			rel_rx_got = 0;
+			return;
+		}
+		memcpy(rel_rx_buf + rel_rx_len, data, take);
+		rel_rx_len += take;
+		rel_rx_got += take;
+		data += take;
+		len -= take;
+		if (rel_rx_got >= rel_rx_need) {
+			guint32 prev = rel_rx_expected - 1;
+
+			if (rel_rx_seq == rel_rx_expected) {
+				if (sock_fd >= 0) {
+					send_frame(sock_fd, FRAME_DATA,
+						   rel_rx_buf + 12, rel_rx_need);
+				}
+				rel_rx_expected++;
+				if (rel_rx_expected == 0) {
+					rel_rx_expected = 1;
+				}
+			} else if (rel_rx_seq != prev) {
+				logmsg("reliable RX sequence gap: expected %u "
+				       "got %u", rel_rx_expected, rel_rx_seq);
+			}
+			rel_rx_len = 0;
+			rel_rx_got = 0;
+		}
 	}
 }
 
@@ -1412,6 +1452,9 @@ int main(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
+
+	/* A client disappearing between two writes must not terminate us. */
+	signal(SIGPIPE, SIG_IGN);
 
 	proto_info[0] = 1;
 	proto_info[1] = 0;
