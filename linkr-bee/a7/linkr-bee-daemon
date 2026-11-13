@@ -735,6 +735,7 @@ class Session:
         self._ctl_event = threading.Event()
         self._ctl_reply = ""
         self._ctl_pending = None
+        self._ctl_waiting = False
         self._ctl_lock = threading.Lock()
         self.upload_bytes = 0
 
@@ -756,6 +757,18 @@ class Session:
     def on_bridge_data(self, data):
         if not data:
             return
+        if self._ctl_waiting and self._ctl_pending is None:
+            # The E907 answers with a line that may be coalesced behind
+            # target output in the same rpmsg message.  While a request is
+            # in flight, split at the first control prefix so the reply is
+            # not shown to clients (and does not time out the request).
+            idx = data.find(b"LINKRCFG ")
+            if idx < 0:
+                self._deliver(data)
+                return
+            if idx:
+                self._deliver(data[:idx])
+                data = data[idx:]
         if self._ctl_pending is not None:
             self._ctl_pending += data
             if len(self._ctl_pending) > 1024:
@@ -1038,14 +1051,19 @@ class Session:
         with self._ctl_lock:
             self._ctl_event.clear()
             self._ctl_reply = ""
+            self._ctl_waiting = True
             try:
-                self.bridge.send(("LINKRCFG %s\n" % payload).encode("ascii"))
-            except OSError as exc:
-                log("uart control send failed: %s" % exc)
-                return None
-            if not self._ctl_event.wait(timeout):
-                return None
-            return self._ctl_reply
+                try:
+                    self.bridge.send(
+                        ("LINKRCFG %s\n" % payload).encode("ascii"))
+                except OSError as exc:
+                    log("uart control send failed: %s" % exc)
+                    return None
+                if not self._ctl_event.wait(timeout):
+                    return None
+                return self._ctl_reply
+            finally:
+                self._ctl_waiting = False
 
     def _uart_command(self, line):
         if line in ("@u?", "@uart?"):
@@ -1241,19 +1259,14 @@ class Session:
         return None
 
     def handle_text(self, client, text):
-        line = text.strip()
-        if line.startswith("@control "):
-            return self.control(client, line[9:])
-        if line.startswith("@c "):
-            return self.control(client, line[3:])
-        if line in ("@control?", "@c?"):
-            return self.control(client, "?")
-        reply = self.name_command(line)
-        if reply is not None:
-            return reply
-        return "ERR control=bad_frame\r\n"
+        # The LAN page uses the same command language as the Management
+        # Service: control (@c), name (@n), Wi-Fi (@w), LAN token (@s),
+        # diagnostics (@i), UART (@u) and WebDAV (@d).
+        if not text.strip():
+            return None
+        return self.handle_command(client, text)
 
-    def handle_binary(self, client, data, bridge):
+    def handle_binary(self, client, data):
         with self.lock:
             now = time.monotonic()
             # The BLE bridge is shared by every BLE host, so its "release"
@@ -1432,6 +1445,10 @@ class Client:
     def send_binary(self, data):
         self.send_frame(0x2, data)
 
+    def send_event(self, reqid, flags, text):
+        """Async event for a WebSocket client: the text frame the page reads."""
+        self.send_text(text)
+
     def run(self):
         self.session.register(self)
         log("ws client %d from %s:%d connected" % (self.id, self.addr[0], self.addr[1]))
@@ -1465,7 +1482,7 @@ class Client:
                     if reply:
                         self.send_text(reply)
                 elif opcode == 0x2:
-                    reply = self.session.handle_binary(self, data, bridge)
+                    reply = self.session.handle_binary(self, data)
                     if reply:
                         self.send_text(reply)
         except (ConnectionError, OSError, ValueError) as exc:
@@ -1527,7 +1544,7 @@ class BleClient:
                 payload = _recv_exact(self.conn, length) if length else b""
                 if ftype == FRAME_DATA:
                     log("ble bridge %d -> rpmsg %d bytes" % (self.id, len(payload)))
-                    self.session.handle_binary(self, payload, bridge)
+                    self.session.handle_binary(self, payload)
                 elif ftype == FRAME_CTL_REQ and len(payload) >= 4:
                     reqid = struct.unpack("<I", payload[:4])[0]
                     text = payload[4:].decode("utf-8", "replace")

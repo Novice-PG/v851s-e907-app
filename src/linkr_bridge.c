@@ -58,18 +58,24 @@ static struct rpmsg_endpoint *bridge_ept;
 static uint32_t bridge_dst;
 static atomic_t bridge_ready;
 static atomic_t uart_rx_total;
+static atomic_t uart_rx_dropped;
 
 static void rx_push(const uint8_t *buf, uint32_t len)
 {
 	k_spinlock_key_t key;
 
+	uint32_t put;
+
 	if (!len) {
 		return;
 	}
 	key = k_spin_lock(&rx_lock);
-	(void)ring_buf_put(&uart_rx_ring, buf, len);
+	put = ring_buf_put(&uart_rx_ring, buf, len);
 	k_spin_unlock(&rx_lock, key);
-	atomic_add(&uart_rx_total, len);
+	atomic_add(&uart_rx_total, put);
+	if (put < len) {
+		atomic_add(&uart_rx_dropped, len - put);
+	}
 }
 
 static void uart_isr(const struct device *dev, void *user_data)
@@ -94,18 +100,26 @@ static void uart_isr(const struct device *dev, void *user_data)
 	k_sem_give(&uart_rx_sem);
 }
 
-/* Drain whatever is in the RX FIFO without waiting for an interrupt. */
+/* Drain whatever is in the RX FIFO without waiting for an interrupt.
+ *
+ * The ns16550 driver does not serialise uart_fifo_read() between a thread and
+ * its own ISR, so mask interrupts while the polling thread reads the FIFO.
+ * (The ISR cannot be interrupted by the thread, so its own path needs no
+ * lock.) */
 static void uart_poll_rx(void)
 {
 	uint8_t buf[64];
+	unsigned int key;
 	int n;
 
+	key = irq_lock();
 	do {
 		n = uart_fifo_read(uart_dev, buf, sizeof(buf));
 		if (n > 0) {
 			rx_push(buf, (uint32_t)n);
 		}
 	} while (n > 0);
+	irq_unlock(key);
 }
 
 static void uart_rx_thread(void *a, void *b, void *c)
@@ -380,6 +394,10 @@ int linkr_bridge_rpmsg_recv(struct rpmsg_endpoint *ept, const void *data,
 		atomic_set(&bridge_ready, 1);
 		n = snprintk(reply, sizeof(reply), "LINKR1 OK rx=%u\n",
 			     (unsigned int)atomic_get(&uart_rx_total));
+		if (atomic_get(&uart_rx_dropped)) {
+			LOG_WRN("%u UART RX bytes dropped (ring full)",
+				(unsigned int)atomic_get(&uart_rx_dropped));
+		}
 		LOG_INF("A7 handshake from addr 0x%x, uart rx=%u", src,
 			(unsigned int)atomic_get(&uart_rx_total));
 		if (n < 0) {

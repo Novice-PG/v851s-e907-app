@@ -54,6 +54,9 @@ static struct rpmsg_endpoint linkr_epts[LINKR_MAX_EPTS];
 static bool linkr_ept_used[LINKR_MAX_EPTS];
 
 K_MSGQ_DEFINE(ipm_msgq, sizeof(uint32_t), 8, 4);
+/* Set when the queue is full: the RX thread then rescans both vrings, so a
+ * dropped notification costs a little work instead of a stalled virtqueue. */
+static atomic_t ipm_overflow;
 
 /* --- rpmsg endpoint: Linkr Bee UART bridge --- */
 
@@ -112,10 +115,15 @@ static void ns_bind_cb(struct rpmsg_device *rdev, const char *name,
 
 static int mailbox_notify(void *priv, uint32_t id)
 {
-	ARG_UNUSED(priv);
+	/* The A7 mbox callback reads the payload as the vring notifyid.  Keep it
+	 * in static storage: the sunxi mailbox copies it into the data register
+	 * synchronously, but a driver that defers the transfer must not get a
+	 * pointer into this stack frame. */
+	static uint32_t notify_id;
 
-	/* The A7 mbox callback reads the payload as the vring notifyid. */
-	return ipm_send(ipm_dev, 0, id, &id, sizeof(id));
+	ARG_UNUSED(priv);
+	notify_id = id;
+	return ipm_send(ipm_dev, 0, id, &notify_id, sizeof(notify_id));
 }
 
 static void ipm_rx_cb(const struct device *dev, void *ctx, uint32_t id,
@@ -131,8 +139,11 @@ static void ipm_rx_cb(const struct device *dev, void *ctx, uint32_t id,
 		notifyid = *(volatile uint32_t *)data;
 	}
 
-	/* ISR context: defer rpmsg processing to the RX thread. */
-	(void)k_msgq_put(&ipm_msgq, &notifyid, K_NO_WAIT);
+	/* ISR context: defer rpmsg processing to the RX thread.  A full queue
+	 * must not lose the kick: mark it and let the thread rescan. */
+	if (k_msgq_put(&ipm_msgq, &notifyid, K_NO_WAIT) != 0) {
+		atomic_set(&ipm_overflow, 1);
+	}
 }
 
 static void ipm_rx_thread(void *a, void *b, void *c)
@@ -148,7 +159,17 @@ static void ipm_rx_thread(void *a, void *b, void *c)
 			continue;
 		}
 
-		(void)rproc_virtio_notified(rvdev.vdev, notifyid);
+		do {
+			(void)rproc_virtio_notified(rvdev.vdev, notifyid);
+		} while (k_msgq_get(&ipm_msgq, &notifyid, K_NO_WAIT) == 0);
+
+		if (atomic_cas(&ipm_overflow, 1, 0)) {
+			/* At least one kick was dropped while the queue was
+			 * full; draining both vrings is cheap and restores
+			 * progress. */
+			(void)rproc_virtio_notified(rvdev.vdev, VRING0_ID);
+			(void)rproc_virtio_notified(rvdev.vdev, VRING1_ID);
+		}
 	}
 }
 

@@ -7,7 +7,7 @@ upstreamable work.
 
 ## What the adaptation actually changes
 
-### Web front-end (generic fixes, two patches)
+### Web front-end (generic fixes, three patches)
 
 1. **`crypto.randomUUID` fallback** — `randomUUID` is only exposed in secure
    contexts, but the LAN bridge is normally served over plain
@@ -17,6 +17,11 @@ upstreamable work.
 2. **LAN management hint** — the management panel assumes a BLE transport in a
    few places; the patch makes it state that the session is reachable over
    LAN instead of showing a BLE-only hint.
+3. **SHA-256 without a secure context** — `crypto.subtle` does not exist on
+   plain-HTTP pages, so download verification (`local_download.js`) and task
+   input fingerprints (`agent_task_state.js`) threw and broke the download and
+   agent flows. `web/sha256_fallback.js` uses WebCrypto when present and a
+   pure-JS SHA-256 otherwise (verified against WebCrypto for sizes 0–100 KB).
 
 Both patches apply cleanly on upstream `d9b2e00` and reproduce the snapshot
 byte for byte (`linkr-bee/verify.sh`).
@@ -66,32 +71,42 @@ builds until the next deploy, so the three fixes need one hardware smoke test
 (daemon + BLE console + a `@u=115200,8,n,1,n` round trip) before they are
 considered verified. The protocol is unchanged.
 
-### Open findings (not fixed)
+### Further findings fixed in this tree
 
-1. **E907 mailbox notifications can be dropped.** `ipm_rx_cb()` queues the
-   notify id with `k_msgq_put(..., K_NO_WAIT)` into an 8-entry queue and
-   ignores the return value. If the queue is full, the vring notification is
-   lost and rpmsg stalls until the next kick. Either increase the depth,
-   handle `-ENOMSG` by processing in the thread that drains later, or use a
-   counting semaphore plus a single "work pending" flag.
-2. **`mailbox_notify()` passes a stack address to `ipm_send()`.** It is safe
-   with the sunxi mailbox driver because the payload is copied into the data
-   register synchronously, but a driver that defers the transfer would read
-   freed stack. Pass a static `uint32_t` or let the IPM API copy.
-3. **UART RX ring overflow is silent.** `rx_push()` ignores
-   `ring_buf_put()`'s return value; at 4 KiB with a stalled A7 this loses
-   bytes without a counter. `uart_poll_rx()` (thread) also reads the FIFO
-   concurrently with `uart_isr()`, which the ns16550 driver does not
-   guarantee to be safe. The polling path exists because CLIC routing was
-   unproven; it should be removed once the IRQ path is trusted.
-4. **LINKRCFG filtering is prefix- and chunk-based.** A control reply is only
-   recognised when it starts an rpmsg chunk; a reply coalesced behind serial
-   bytes reaches the browser and makes `@u=` time out. A target that prints
-   `LINKRCFG ` also gets swallowed.
-5. **Daemon detail.** `Client.run()` passes a module-global `bridge` into
-   `handle_binary()`, which does not use it — fragile but harmless.
-   `_local_ip()` fallback and the duplicate import were fixed above.
+5. **E907 dropped mailbox kicks.** `ipm_rx_cb()` ignored a full
+   `k_msgq_put()`; a lost kick stalls the virtqueue until the next one. The
+   ISR now sets an overflow flag and the RX thread rescans both vrings after
+   draining the queue.
+6. **E907 passed a stack address to `ipm_send()`.** `mailbox_notify()` still
+   hands the driver a pointer, but to static storage now, so a driver that
+   defers the transfer cannot read a dead stack frame.
+7. **Silent UART RX loss and a FIFO race.** `rx_push()` now accounts for the
+   bytes `ring_buf_put()` could not store (logged on the next handshake), and
+   the polling fallback masks interrupts while it reads the FIFO, because the
+   ns16550 driver does not serialise `uart_fifo_read()` against its own ISR.
+8. **Control replies coalesced behind serial data.** While an `@u=` request
+   is in flight the daemon now splits the rpmsg chunk at the first
+   `LINKRCFG ` prefix instead of only recognising a reply that starts the
+   chunk.
+9. **Daemon dead parameter.** `handle_binary()` no longer takes an unused
+   `bridge` argument (the WebSocket path was reading a module global).
+10. **LAN WebSocket could not run the command set.** `handle_text()` only
+   accepted `@c` and `@n`, so the page's own `@w?`, `@s?`, `@i?`, `@u?` and
+   `@d?` requests answered `ERR control=bad_frame`. WebSocket text now goes
+   through the same dispatcher as the BLE Management Service, and async
+   events (scan results, Wi-Fi state) are written as ordinary text frames the
+   page already parses.
 
+### Remaining limitations
+
+1. A target device that itself prints a line starting with `LINKRCFG ` is
+   still swallowed; the prefix namespace is reserved for the bridge.
+2. BLE management/reliable writes must carry the complete 12-byte header in
+   the first fragment. Every practical ATT MTU (>= 23) does, but a host that
+   fragments the header itself is rejected.
+3. The E907 changes above were built and flashed on the reference board;
+   the rpmsg handshake, `@u?`/`@u=`, LAN commands and BLE bridge all came up
+   again after the reboot. Long-run soak testing is still pending.
 ### Known limitations (not bugs)
 
 - **Session ownership is A7-side only.** The E907 bridge is stateless; every
@@ -114,5 +129,5 @@ considered verified. The protocol is unchanged.
   hardware; only short smoke tests were done.
 - `linkr-ble` currently starts only from `S54bluetooth`; if `bluetoothd` dies
   the GATT server is not restarted automatically.
-- The two web patches are generic enough to go upstream, but they are
+- The web patches are generic enough to go upstream, but they are
   deliberately not submitted from here.

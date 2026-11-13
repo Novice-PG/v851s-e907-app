@@ -1,6 +1,8 @@
 /* Application-owned task evidence and resumable observations. No command text,
  * permissions or model settings belong in a checkpoint. Stored state is history,
  * never evidence for a new run. */
+import { sha256Hex } from "./sha256_fallback.js";
+
 const idPattern = /^[a-zA-Z0-9_-]{1,80}$/;
 const statuses = ['pending', 'in_progress', 'completed', 'blocked'];
 const observationTools = new Set(['get_device_status', 'read_serial_log', 'search_serial_log',
@@ -11,8 +13,7 @@ const accessoryTools = new Set(['set_uart_config','set_wifi','set_webdav']);
 
 export async function inputFingerprint({text, appendEnter}) {
   const bytes = new TextEncoder().encode(JSON.stringify([text, appendEnter]));
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  return sha256Hex(bytes);
 }
 
 export function executionReference(record) {

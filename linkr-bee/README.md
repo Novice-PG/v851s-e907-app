@@ -15,8 +15,8 @@ and `radxa/linkr-bee` stay untouched.
 | `a7/ble-adv-data.py` | `/usr/bin/ble-adv-data.py` | pushes LE ADV/SCAN_RSP the 4.9 kernel drops |
 | `a7/certs/san.cnf` | `/usr/share/linkr-bee/certs/` | certificate template (key is per board) |
 | `a7/S99linkrbee.legacy` | — | previous boot script, reference only |
-| `patches/` | — | two web patches on top of `d9b2e00` |
-| `snapshot/web/` | — | patched `web/index.html` and `web/app.js` |
+| `patches/` | — | three web patches on top of `d9b2e00` |
+| `snapshot/web/` | — | every patched web file (`index.html`, `app.js`, `local_download.js`, `agent_task_state.js`, `sha256_fallback.js`) |
 | `web/` | `/usr/share/linkr-bee/web/` | complete web terminal as shipped |
 | `apply-web.sh` | — | apply `patches/` to a linkr-bee checkout |
 | `build-linkr-ble.sh` | — | cross-build the GATT server |
@@ -33,6 +33,9 @@ the review of this adaptation.
 | Web baseline commit | `d9b2e00` |
 | Patched `web/index.html` | `39f8ce3c04cde21152e0d3e09a7b4b74` |
 | Patched `web/app.js` | `8fcb8095b583945b65ee55aa7d933851` |
+| Patched `web/local_download.js` | `8fa8feb9f17e51009a9340fc15e35f92` |
+| Patched `web/agent_task_state.js` | `1575e4a0d5d93babcd5d697298ce3f07` |
+| New `web/sha256_fallback.js` | `fd08119b6db4467aab171fc12df28acf` |
 
 The patches only touch those two files. `snapshot/web/` exists so the board
 tree can be recovered even if the upstream checkout is lost.

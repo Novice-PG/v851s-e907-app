@@ -1,4 +1,5 @@
 import { validateDownload } from "./download_plan.js";
+import { sha256Hex } from "./sha256_fallback.js";
 
 // Bounded browser download; larger images should use the target download path.
 export async function fetchDownload({ url, sha256, signal, onProgress = () => {}, fetchImpl = fetch, maxBytes = 128 * 1024 * 1024 }) {
@@ -29,7 +30,7 @@ export async function fetchDownload({ url, sha256, signal, onProgress = () => {}
   const content = new Uint8Array(bytes);
   let offset = 0;
   for (const chunk of chunks) { content.set(chunk, offset); offset += chunk.length; }
-  const actual = [...new Uint8Array(await crypto.subtle.digest("SHA-256", content))].map(b => b.toString(16).padStart(2, "0")).join("");
+  const actual = await sha256Hex(content);
   signal?.throwIfAborted();
   if (sha256 && actual !== sha256) throw new Error(`SHA-256 mismatch. Expected ${sha256}; actual ${actual}. File was not offered for saving.`);
   return { content, bytes, sha256: actual, checksumStatus: sha256 ? "matched" : "computed-only" };

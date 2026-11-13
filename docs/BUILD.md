@@ -74,7 +74,7 @@ rather than by md5 after a rebuild.
 # installs into /usr/share/linkr-bee/web
 ```
 
-The two patches are against [radxa/linkr-bee](https://github.com/radxa/linkr-bee)
+The three patches are against [radxa/linkr-bee](https://github.com/radxa/linkr-bee)
 commit `d9b2e00`. `linkr-bee/web/` is the complete patched tree as installed on
 the board, so the board does not need a checkout at runtime.
 

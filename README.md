@@ -19,9 +19,10 @@ BLE central ── GATT ── linkr-ble ── /var/run/linkr-bee.sock ──�
 
 ```
 src/, prj.conf, CMakeLists.txt   E907 Zephyr application (rpmsg + UART3 bridge)
+firmware/zephyr_e907.elf         built from src/ (what remoteproc loads)
 tools/                           host-side rpmsg smoke test and benchmark
 linkr-bee/
-├── patches/                     two web patches on top of linkr-bee d9b2e00
+├── patches/                     three web patches on top of linkr-bee d9b2e00
 ├── snapshot/web/                the patched web files (md5-pinned)
 ├── web/                         full web terminal as shipped on the board
 ├── a7/                          A7 daemon, GATT server, init scripts, config
