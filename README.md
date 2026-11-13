@@ -1,5 +1,7 @@
 # v851s-e907-app
 
+**English** | [简体中文](README.zh-CN.md)
+
 Zephyr firmware for the **E907 RISC-V co-processor** on the YuzukiPI-Lizard
 (Allwinner V851S), plus the **Linkr Bee** changes made for this board on the
 A7 side (Linux/Tina).

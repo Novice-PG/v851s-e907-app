@@ -134,7 +134,8 @@ d7aaaef27ff18a0e8deff9b29439090e  ./linkr-bee/web/vendor/xterm/xterm.js
 be51d01a17648fe7652c7527d3f56f25  ./linkr-bee/web/window.css
 388843da39f6297b0b5fb3b8ad88416d  ./NOTICE
 24acb459c696faa2c0b17a94b5e4438e  ./prj.conf
-fc809988ff749082f7337426ee3c929a  ./README.md
+0e8cccb9736e1f6b7aa9ecade3dce30d  ./README.md
+099ac3dd56cd51ad9e3f9247bfb3b67c  ./README.zh-CN.md
 fb90da9beaeb3984de9ca7de6ac49f1b  ./src/board_early.c
 615ba3bb29442712a176bbc272377bae  ./src/linkr_bridge.c
 77e3ffa8bd047b39c2df80286c58dee4  ./src/linkr_bridge.h
