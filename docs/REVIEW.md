@@ -111,6 +111,33 @@ considered verified. The protocol is unchanged.
   `requestDiagnostics()` was a no-op outside BLE mode, so the panel stayed
   empty until the user pressed "Refresh".
 
+### BLE throughput (2026-11-13)
+
+The BLE path was ~10x slower than the X1 firmware because of three independent
+limits in `linkr_ble.c`:
+
+- every ATT value was 20 bytes (the BLE 4.0 default), although Android asks
+  for MTU 512, HarmonyOS for 247 and iOS negotiates 185; BlueZ silently
+  truncates to MTU-3, so a fixed larger value was not possible;
+- the Reliable UART sender used 64-byte frames, each split into four 20-byte
+  confirmed indications;
+- frames were paced 10 ms per fragment and 30 ms per frame, and a frame was
+  started with whatever happened to be buffered (often 30 bytes).
+
+Fixes:
+- a small bluetoothd patch publishes the negotiated ATT MTU per peer under
+  `/var/run/linkr-bt-mtu/`; `linkr-ble` uses the smallest value and sets the
+  chunk to `mtu - 3` (clamped to 20..514), so a 23-MTU peer still gets 20-byte
+  chunks and no truncation;
+- Reliable UART frames carry 232-byte payloads again (12-byte header + 232 =
+  244, one indication at MTU >= 247);
+- pacing is 2 ms per fragment / 15 ms per frame, and the sender waits up to
+  10 ms to collect a full 232-byte frame instead of sending tiny ones.
+
+NUS at MTU 23 still delivers every byte (measured 32768/32768); the Reliable
+path is confirmed to frame correctly, but its real speed depends on the
+central's indication round-trip (the phone app confirms immediately).
+
 ### Remaining limitations
 
 1. A target device that itself prints a line starting with `LINKRCFG ` is

@@ -17,6 +17,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
+#include <dirent.h>
 #include <gio/gio.h>
 #include <glib-unix.h>
 #include <signal.h>
@@ -84,7 +85,12 @@
 #define NAME_FILE "/mnt/UDISK/persist/ble-name"
 #define BLE_NAME_MAX 29
 
-#define ATT_CHUNK 20
+/* ATT value size for notifications/indications.  BlueZ truncates silently to
+ * MTU-3, so a fixed larger value loses bytes on small-MTU peers.  bluetoothd
+ * publishes each peer's negotiated MTU under /var/run/linkr-bt-mtu (patched
+ * for linkr); start at the BLE 4.0 default and grow once it is known. */
+#define LINKR_MTU_DIR "/var/run/linkr-bt-mtu"
+static gsize att_chunk = 20;
 
 enum ckind {
 	CK_NUS_RX,
@@ -153,6 +159,7 @@ static guint8 proto_info[10];
 /* Reliable UART state */
 static guint32 rel_rx_expected = 1;
 static guint32 rel_tx_next = 1;
+static gint64 rel_fill_since;
 static guint32 rel_tx_acked;
 
 /* Reliable RX reassembly */
@@ -1010,7 +1017,7 @@ static void mgmt_send_tick(gint64 now)
 		g_free(rsp);
 		mgmt_off = 0;
 	}
-	gsize n = MIN((gsize)ATT_CHUNK, mgmt_cur->len - mgmt_off);
+	gsize n = MIN(att_chunk, mgmt_cur->len - mgmt_off);
 
 	emit_value(MGMT_RSP, mgmt_cur->data + mgmt_off, n);
 	mgmt_off += n;
@@ -1029,10 +1036,24 @@ static void rel_send_tick(gint64 now)
 		return;
 	}
 	if (!rel_cur) {
+		/* Coalesce into full frames: sending whatever happened to be
+		 * buffered at this tick produced ~30-byte frames, and every
+		 * frame costs a 15 ms pacing slot plus one or more confirmed
+		 * indications.  Wait up to 10 ms for 232 bytes, then send. */
 		if (!serial_in->len) {
+			rel_fill_since = 0;
 			return;
 		}
-		gsize n = MIN((gsize)64, serial_in->len);
+		if (serial_in->len < 232) {
+			if (!rel_fill_since) {
+				rel_fill_since = now;
+			}
+			if (now - rel_fill_since < 10000) {
+				return;
+			}
+		}
+		rel_fill_since = 0;
+		gsize n = MIN((gsize)232, serial_in->len);
 		guint8 hdr[12] = { 'L', 'R', 1, 0,
 				   rel_tx_next & 0xff,
 				   (rel_tx_next >> 8) & 0xff,
@@ -1046,7 +1067,7 @@ static void rel_send_tick(gint64 now)
 		g_byte_array_remove_range(serial_in, 0, n);
 		rel_off = 0;
 	}
-	gsize n = MIN((gsize)ATT_CHUNK, rel_cur->len - rel_off);
+	gsize n = MIN(att_chunk, rel_cur->len - rel_off);
 
 	emit_value(REL_TX, rel_cur->data + rel_off, n);
 	rel_off += n;
@@ -1058,9 +1079,9 @@ static void rel_send_tick(gint64 now)
 		if (rel_tx_next == 0) {
 			rel_tx_next = 1;
 		}
-		rel_next_us = now + 30000;
+		rel_next_us = now + 15000;
 	} else {
-		rel_next_us = now + 10000;
+		rel_next_us = now + 2000;
 	}
 }
 
@@ -1073,12 +1094,65 @@ static void nus_send_tick(gint64 now)
 		return;
 	}
 	for (i = 0; i < 4 && serial_in->len; i++) {
-		gsize n = MIN((gsize)ATT_CHUNK, serial_in->len);
+		gsize n = MIN(att_chunk, serial_in->len);
 
 		emit_value(NUS_TX, serial_in->data, n);
 		g_byte_array_remove_range(serial_in, 0, n);
 	}
 	nus_next_us = now + 5000;
+}
+
+/* Pick the smallest ATT MTU of the connected peers, published by bluetoothd.
+ * Called once a second: the MTU exchange finishes before the first notify. */
+static void refresh_att_chunk(gint64 now)
+{
+	static gint64 next_us;
+	GDir *dir;
+	const char *name;
+	guint min_mtu = 0;
+
+	if (now < next_us) {
+		return;
+	}
+	next_us = now + 1000000;
+	dir = g_dir_open(LINKR_MTU_DIR, 0, NULL);
+	if (!dir) {
+		att_chunk = 20;
+		return;
+	}
+	while ((name = g_dir_read_name(dir)) != NULL) {
+		char path[128];
+		char buf[16];
+		FILE *f;
+		guint value;
+
+		snprintf(path, sizeof(path), "%s/%s", LINKR_MTU_DIR, name);
+		f = fopen(path, "r");
+		if (!f) {
+			continue;
+		}
+		if (fgets(buf, sizeof(buf), f)) {
+			value = (guint)strtoul(buf, NULL, 10);
+			if (value > 3 && (min_mtu == 0 || value < min_mtu)) {
+				min_mtu = value;
+			}
+		}
+		fclose(f);
+	}
+	g_dir_close(dir);
+	if (min_mtu > 3) {
+		gsize chunk = min_mtu - 3;
+
+		if (chunk > 514) {
+			chunk = 514;
+		}
+		if (chunk < 20) {
+			chunk = 20;
+		}
+		att_chunk = chunk;
+	} else {
+		att_chunk = 20;
+	}
 }
 
 static gboolean tick_cb(gpointer data)
@@ -1087,6 +1161,7 @@ static gboolean tick_cb(gpointer data)
 
 	(void)data;
 
+	refresh_att_chunk(now);
 	mgmt_send_tick(now);
 	rel_send_tick(now);
 	nus_send_tick(now);
