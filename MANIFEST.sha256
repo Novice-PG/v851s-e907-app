@@ -9,7 +9,10 @@ fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 515511707a4f658e84171296cd273be4  ./book/02-workbench.md
 fc54ea704cf03e3a0d5f608da4354f3a  ./book/03-c-for-embedded.md
 71a5eca35857068538632ce92dd8146a  ./book/04-linux-for-embedded.md
-638d2c824f9f6f95f8f76039576c2788  ./book/README.md
+73e3ab48df1b58aba274ce53014d075d  ./book/05-uart-and-signals.md
+65abda56102fa5f1d2a67d70b1590c82  ./book/06-soc-memory-pinmux.md
+121630ae0bb55099e024b5f3e74bebf7  ./book/07-boot-chain.md
+ca6afc081c0bedfaeed227f80b56a8b8  ./book/README.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
 9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md
