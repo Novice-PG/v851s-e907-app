@@ -69,7 +69,8 @@ A7 侧（板内镜像已自带）：`/usr/bin/linkr-bee-daemon`、`/usr/bin/link
 `http://<板子 IP>/`。重新编译见 [docs/BUILD.md](docs/BUILD.md)，更新运行中的
 板子见 [docs/DEPLOY.md](docs/DEPLOY.md)，完整讲解见
 [docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md)，小白讲解稿见
-[docs/TALK.zh-CN.md](docs/TALK.zh-CN.md)。
+[docs/TALK.zh-CN.md](docs/TALK.zh-CN.md)。从零开始、面向只会一点 C 和
+几条 Linux 命令的读者的完整课程见 [book/README.md](book/README.md)。
 
 ## 来源与版本
 

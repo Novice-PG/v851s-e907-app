@@ -74,6 +74,8 @@ A7 side, on the board (already installed by the board image):
 [docs/DEPLOY.md](docs/DEPLOY.md) to update a running board. A detailed
 Chinese walkthrough lives in [docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md);
 a beginner-friendly lecture script is in [docs/TALK.zh-CN.md](docs/TALK.zh-CN.md).
+A from-scratch Chinese course that starts from C and a few Linux commands
+lives in [book/README.md](book/README.md).
 
 ## Provenance
 
