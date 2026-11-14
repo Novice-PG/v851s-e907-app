@@ -239,7 +239,9 @@
 | 第 2 部分 | 初稿完成（第 11～17 章） |
 | 第 3 部分 | 初稿完成（第 18～25 章） |
 | 第 4 部分 | 初稿完成（第 26～31 章） |
-| 第 5～6 部分 | 大纲完成，正文待写 |
+| 第 5 部分 | 初稿完成（第 32～37 章） |
+| 第 6 部分 | 初稿完成（第 38～40 章） |
+| 附录 A～F | 已写 |
 
 ### 已写章节
 
@@ -275,6 +277,24 @@
 - [第 29 章 CLI 工具](29-cli.md)
 - [第 30 章 Android BLE 客户端](30-android-ble.md)
 - [第 31 章 协议统一](31-protocol-unification.md)
+- [第 32 章 构建与镜像](32-build-and-image.md)
+- [第 33 章 刷机与救砖](33-flashing-and-rescue.md)
+- [第 34 章 测试与长稳](34-testing-and-soak.md)
+- [第 35 章 性能与内存](35-performance-and-memory.md)
+- [第 36 章 安全与产品化](36-security-productization.md)
+- [第 37 章 开源、文档与许可证](37-open-source-docs-license.md)
+- [第 38 章 需求与架构](38-requirements-architecture.md)
+- [第 39 章 从零做一遍](39-implement-from-scratch.md)
+- [第 40 章 验收与交付](40-acceptance-demo.md)
 
-> 这本书会按章迭代。先把第 0 部分读透，再进入硬件。
-> 如果你在某一章卡住，先回到上一章的“验收”，不要硬跳。
+### 附录
+
+- [附录 A：术语表](appendix-a-glossary.md)
+- [附录 B：命令速查](appendix-b-commands.md)
+- [附录 C：内存地图与寄存器速查](appendix-c-memory-map.md)
+- [附录 D：常见错误 100 例](appendix-d-errors.md)
+- [附录 E：代码阅读路线](appendix-e-code-reading.md)
+- [附录 F：参考资料](appendix-f-references.md)
+
+> 全书 40 章 + 6 个附录已完稿。建议按顺序读；卡住时回到上一章的“验收”，不要硬跳。
+> 需要速查时直接跳到附录 B/C/D，需要动手时按第 39、40 章的清单推进。
