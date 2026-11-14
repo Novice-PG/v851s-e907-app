@@ -12,7 +12,10 @@ fc54ea704cf03e3a0d5f608da4354f3a  ./book/03-c-for-embedded.md
 73e3ab48df1b58aba274ce53014d075d  ./book/05-uart-and-signals.md
 65abda56102fa5f1d2a67d70b1590c82  ./book/06-soc-memory-pinmux.md
 121630ae0bb55099e024b5f3e74bebf7  ./book/07-boot-chain.md
-ca6afc081c0bedfaeed227f80b56a8b8  ./book/README.md
+167725d7aede4152488e12f6d2fe6e6b  ./book/08-storage.md
+6404d8ae619b00fe7e4871774d481793  ./book/09-device-tree.md
+7340b9d212e37a11b221284c9a400a31  ./book/10-build-system.md
+e710e4285894f86131bf2050bbce4b58  ./book/README.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
 9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md
