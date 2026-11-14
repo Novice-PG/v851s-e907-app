@@ -10,3 +10,6 @@ linkr-bee/a7/certs/*.crt
 *.orig
 *.rej
 __pycache__/
+
+# book build intermediate
+book/.build/

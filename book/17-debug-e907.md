@@ -535,7 +535,71 @@ CONFIG_OPENAMP_VRING_ALIGNMENT=16
 
 ---
 
-## 17.12 练习
+## 17.12 实验：用三层法定位一次故障
+
+### 实验 A：记录健康状态
+
+在一台正常板子上执行：
+
+```sh
+cat /sys/class/remoteproc/remoteproc0/state
+cat /sys/class/remoteproc/remoteproc0/firmware
+tail -30 /sys/kernel/debug/remoteproc/remoteproc0/trace0
+ls -l /dev/rpmsg*
+dmesg | grep -i -E 'remoteproc|rpmsg'
+```
+
+把每一行归到“硬件 / remoteproc / rpmsg / UART”四层中的一层。
+**先有基线，才知道什么叫异常。**
+
+### 实验 B：重启 E907，观察端点生命周期
+
+```sh
+ls /dev/rpmsg*                 # 记下当前端点
+echo stop  > /sys/class/remoteproc/remoteproc0/state
+sleep 8
+ls /dev/rpmsg*                 # 应该消失
+echo start > /sys/class/remoteproc/remoteproc0/state
+sleep 3
+ls /dev/rpmsg*                 # 应该重新出现
+dmesg | tail -20
+```
+
+观察：端点消失和出现分别对应 `dmesg` 的哪一行？
+
+### 实验 C：制造丢包并定位
+
+在目标串口上持续发数据（或用脚本发），同时在网页端做一次
+大流量粘贴，观察：
+
+```sh
+# 在 daemon 日志或 @i? 输出里看
+LINKRSTAT ...
+```
+
+改变条件（降低波特率、暂停读取、增大突发），记录
+`drop_rx`/`drop_tx` 的变化，判断瓶颈在哪一层。
+
+### 实验 D：跑排查脚本
+
+把 17.9 的 `e907-status.sh` 真正写出来并跑通。要求：
+
+```text
+- 每个检查项输出 OK/FAIL
+- FAIL 时打印“下一步查什么”
+- 全部正常时退出码为 0
+```
+
+### 实验 E：模拟“端点没出现”
+
+在备用板上把固件换成缺少 resource table 的版本（或临时改配置），
+观察 `state`、`trace0`、`dmesg` 和 `/dev/rpmsg*` 的差异，然后恢复。
+
+> 只在备用板做。**主力板不要拿来试启动失败。**
+
+---
+
+## 17.13 练习
 
 ### 练习 17.1（必做）
 
@@ -580,7 +644,7 @@ PC 翻译成源码行号。不需要真的改坏主力板，可以在主机上
 
 ---
 
-## 17.13 本章验收
+## 17.14 本章验收
 
 1. 能读懂 remoteproc 的 `state`，并知道每种值的含义。
 2. 会用 `trace0` 判断固件启动到哪一步。
