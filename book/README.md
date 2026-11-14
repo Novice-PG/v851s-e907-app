@@ -5,7 +5,7 @@
 > 版本：第一版草稿（对应代码 `v851s-e907-app` v12，2026-11-14）
 >
 > PDF：[`from-uart-to-heterogeneous-systems.pdf`](from-uart-to-heterogeneous-systems.pdf)
-> （A4，570 页，含封面、目录、页码和 PDF 书签）
+> （A4，573 页，含封面、目录、页码和 PDF 书签；正文示意图已排成矢量图）
 >
 > 重新生成：`python3 book/build-pdf.py`（需要 Python `markdown` 和 Chromium）
 >

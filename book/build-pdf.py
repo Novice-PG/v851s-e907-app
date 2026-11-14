@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import html as html_lib
 import json
 import re
 import shutil
@@ -328,6 +329,20 @@ hr {
   margin-bottom: 3pt;
 }
 
+/* ---------- text diagrams ---------- */
+
+.art {
+  margin: 9pt 0 12pt 0;
+  padding: 7pt 9pt;
+  background: #f6f7f9;
+  border: 0.6pt solid #d9dee5;
+  border-left: 3pt solid #2b5c8a;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.art svg { display: block; max-width: 100%; }
+
 .front h2 { border-left: none; padding-left: 0; color: #2b5c8a; }
 .front .lead { font-size: 12pt; line-height: 1.8; }
 
@@ -359,6 +374,237 @@ def chapter_title(text: str, path: Path) -> str:
 
 GOAL_BLOCK = re.compile(r"^(> 本章目标[^\n]*)\n(?=> \d+\.)", re.MULTILINE)
 
+# Characters that carry the drawing, plus arrows that must stay centered
+# in their cell.
+BOX = set("┌┐└┘─│├┤┬┴┼")
+ARROWS = set("►◄▲▼→←↑↓↔")
+WIDE = set("（），：、。“”")
+
+CELL_FONT = 9.0          # pt, ASCII cell font size
+CELL_RATIO = 0.6017      # DejaVu Sans Mono advance / em
+
+
+def char_width(ch: str) -> int:
+    """Terminal cell width of a character."""
+    if ch in BOX:
+        return 1
+    import unicodedata
+
+    return 2 if unicodedata.east_asian_width(ch) in "WF" else 1
+
+
+def is_cjk(ch: str) -> bool:
+    return char_width(ch) == 2
+
+
+
+VERT = set("│┌┐└┘├┤┬┴┼")
+
+
+def _columns(line: str) -> list[int]:
+    cols, c = [], 0
+    for ch in line:
+        cols.append(c)
+        c += char_width(ch)
+    return cols
+
+
+def _vertical_columns(lines: list[str]) -> list[int]:
+    """Columns where vertical borders actually are, ignoring 1-2 cell drift.
+
+    The source diagrams were typed next to CJK text, so some borders are
+    one cell off.  The true border wins the vote.
+    """
+    counts: dict[int, int] = {}
+    for line in lines:
+        for col, ch in zip(_columns(line), line):
+            if ch in VERT:
+                counts[col] = counts.get(col, 0) + 1
+    if not counts:
+        return []
+    cands = sorted(counts)
+    clusters: list[list[int]] = [[cands[0]]]
+    for c in cands[1:]:
+        if c - clusters[-1][-1] <= 1:
+            clusters[-1].append(c)
+        else:
+            clusters.append([c])
+    return [max(cl, key=lambda c: (counts[c], c)) for cl in clusters
+            if max(counts[c] for c in cl) >= 2]
+
+
+def snap_diagram(text: str) -> str:
+    """Move drifting vertical borders onto the consensus column."""
+    lines = text.rstrip("\n").split("\n")
+    cols = _vertical_columns(lines)
+    if not cols:
+        return text
+    fixed = []
+    for line in lines:
+        s = line
+        guard = 0
+        while guard < 64:
+            guard += 1
+            changed = False
+            for i, ch in enumerate(s):
+                if ch not in VERT:
+                    continue
+                col = sum(char_width(c) for c in s[:i])
+                target = min(cols, key=lambda c: abs(c - col))
+                if target == col or abs(target - col) > 3:
+                    continue
+                delta = target - col
+                if delta > 0:
+                    fill = "─" if i > 0 and s[i - 1] == "─" else " "
+                    s = s[:i] + fill * delta + s[i:]
+                else:
+                    j = i
+                    while j > 0 and s[j - 1] in " ─" and i - j < -delta:
+                        j -= 1
+                    if i - j == 0:
+                        continue
+                    s = s[:j] + s[i:]
+                changed = True
+                break
+            if not changed:
+                break
+        fixed.append(s)
+    return "\n".join(fixed)
+
+
+def render_art_svg(text: str) -> str:
+    """Typeset a text diagram on a fixed character grid.
+
+    Box-drawing characters become real vector lines (glyphs from monospace
+    fonts leave gaps and never line up with CJK text).  Every character is
+    placed at its own column, so widths cannot drift.
+    """
+    text = snap_diagram(text)
+    lines = text.rstrip("\n").split("\n")
+    cols = max((sum(char_width(c) for c in line) for line in lines), default=0)
+    if cols == 0:
+        return ""
+
+    s = CELL_FONT
+    if cols * CELL_RATIO * s > 480:            # shrink very wide diagrams
+        s = max(6.5, 480 / (cols * CELL_RATIO))
+    w = CELL_RATIO * s                          # one cell
+    h = 1.42 * s                                # one row
+    width = cols * w
+    height = len(lines) * h
+
+    out = [
+        f'<svg class="art-svg" xmlns="http://www.w3.org/2000/svg" '
+        f'width="{width:.2f}pt" height="{height:.2f}pt" '
+        f'viewBox="0 0 {width:.2f} {height:.2f}">'
+    ]
+
+    # ---- box-drawing characters as vector segments -------------------
+    seg = {
+        "─": "LR", "│": "UD",
+        "┌": "RD", "┐": "LD", "└": "RU", "┘": "LU",
+        "├": "UDR", "┤": "UDL", "┬": "LRD", "┴": "LRU", "┼": "LRUD",
+    }
+    path = []
+    for r, line in enumerate(lines):
+        col = 0
+        for ch in line:
+            if ch in seg:
+                cx, cy = col * w, r * h
+                xm, ym = cx + w / 2, cy + h / 2
+                x0, x1, y0, y1 = cx, cx + w, cy, cy + h
+                for d in seg[ch]:
+                    if d == "L":
+                        path.append(f"M{x0:.2f} {ym:.2f}H{xm:.2f}")
+                    elif d == "R":
+                        path.append(f"M{xm:.2f} {ym:.2f}H{x1:.2f}")
+                    elif d == "U":
+                        path.append(f"M{xm:.2f} {y0:.2f}V{ym:.2f}")
+                    else:
+                        path.append(f"M{xm:.2f} {ym:.2f}V{y1:.2f}")
+            col += char_width(ch)
+    if path:
+        out.append(
+            f'<path d="{" ".join(path)}" fill="none" stroke="#1a1a1a" '
+            f'stroke-width="{max(0.45, s * 0.06):.2f}" '
+            f'stroke-linecap="butt" shape-rendering="geometricPrecision"/>'
+        )
+
+    # ---- text runs ----------------------------------------------------
+    for r, line in enumerate(lines):
+        y = r * h + h / 2
+        col = 0
+        run = ""
+        run_col = 0
+        run_cjk = False
+        for ch in line:
+            cw = char_width(ch)
+            if ch in BOX:
+                if run.strip():
+                    out.append(_text_run(run, run_col, y, run_cjk, w))
+                run = ""
+                col += cw
+                continue
+            if ch == " ":
+                if run.strip():
+                    out.append(_text_run(run, run_col, y, run_cjk, w))
+                run = ""
+                col += cw
+                continue
+            if not run:
+                run = ch
+                run_col = col
+                run_cjk = is_cjk(ch)
+            elif is_cjk(ch) != run_cjk:
+                out.append(_text_run(run, run_col, y, run_cjk, w))
+                run, run_col, run_cjk = ch, col, is_cjk(ch)
+            else:
+                run += ch
+            col += cw
+        if run.strip():
+            out.append(_text_run(run, run_col, y, run_cjk, w))
+
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _text_run(run: str, col: int, y: float, cjk: bool, cell: float) -> str:
+    x = col * cell
+    if cjk:
+        size = cell * 1.9
+        return (
+            f'<text x="{x:.2f}" y="{y:.2f}" font-size="{size:.2f}" '
+            f'font-family="Noto Sans CJK SC, Noto Sans CJK TC, sans-serif" '
+            f'text-anchor="start" dominant-baseline="central" '
+            f'fill="#1a1a1a">{html_lib.escape(run)}</text>'
+        )
+    return (
+        f'<text x="{x:.2f}" y="{y:.2f}" font-size="{CELL_FONT:.2f}" '
+        f'font-family="DejaVu Sans Mono, monospace" '
+        f'text-anchor="start" dominant-baseline="central" '
+        f'fill="#1a1a1a" xml:space="preserve">{html_lib.escape(run)}</text>'
+    )
+
+
+PRE_RE = re.compile(
+    r'<pre><code(?: class="language-([^"]*)")?>(.*?)</code></pre>', re.S
+)
+STRUCTURAL_RE = re.compile(r" {2,}|[│─┌┐└┘├┤┬┴┼]")
+
+
+def is_diagram(code: str, lang: str | None) -> bool:
+    """Diagrams are text blocks that rely on the character grid."""
+    if lang not in (None, "text"):
+        return False
+    if any(c in code for c in BOX):
+        return True
+    lines = code.splitlines()
+    if any(STRUCTURAL_RE.search(line) for line in lines) and any(
+        is_cjk(c) for c in code
+    ):
+        return True
+    return False
+
 
 def md_convert(text: str) -> str:
     # A blockquote list needs a blank quoted line before it, otherwise
@@ -370,14 +616,20 @@ def md_convert(text: str) -> str:
     )
     html = md.convert(text)
 
-    # keep short code blocks on one page; long ones may still split
-    def keep_short(m: re.Match) -> str:
+    def replace_pre(m: re.Match) -> str:
+        lang = m.group(1)
+        code = html_lib.unescape(m.group(2))
+        if is_diagram(code, lang):
+            svg = render_art_svg(code)
+            if svg:
+                return f'<div class="art">{svg}</div>'
         block = m.group(0)
+        # keep short code blocks on one page; long ones may still split
         if block.count("\n") <= 24:
             return block.replace("<pre>", '<pre class="keep">', 1)
         return block
 
-    return re.sub(r"<pre>.*?</pre>", keep_short, html, flags=re.S)
+    return PRE_RE.sub(replace_pre, html)
 
 
 def slug_for(path: Path) -> str:

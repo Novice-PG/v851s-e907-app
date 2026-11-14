@@ -48,8 +48,9 @@ dc49785a8e639f4c66436cc988750549  ./book/appendix-f-references.md
 26be645c7b0eabb32b3bda9ac3f672c9  ./book/appendix-g-lab-setup.md
 7dbda0be9d465bb9e32c17db4284dc26  ./book/appendix-h-gdb-core.md
 1a36042f9fd3823bc2a89c602d28312a  ./book/appendix-i-kernel-module.md
-d440e7c707bae48d38ffe71209bca8db  ./book/build-pdf.py
-2c9fe2cd9d6049894330464512755620  ./book/README.md
+2035fd8ec3403e5c3c60c940accd89db  ./book/build-pdf.py
+53a100b9e532beae36f2d09e0ec8d6e0  ./book/__pycache__/build-pdf.cpython-313.pyc
+0801afc5a6e24f0ba5412d584aac80dc  ./book/README.md
 1072616cafbba7878f86f5b991870d7d  ./CMakeLists.txt
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
