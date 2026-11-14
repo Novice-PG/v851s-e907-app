@@ -8,7 +8,8 @@ fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 5f1ede051e887410b85c0bcc2f20ad37  ./book/01-panorama.md
 515511707a4f658e84171296cd273be4  ./book/02-workbench.md
 fc54ea704cf03e3a0d5f608da4354f3a  ./book/03-c-for-embedded.md
-e97c433a0fae3f3f9358eccd6b8ec1ba  ./book/README.md
+71a5eca35857068538632ce92dd8146a  ./book/04-linux-for-embedded.md
+638d2c824f9f6f95f8f76039576c2788  ./book/README.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
 9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md
