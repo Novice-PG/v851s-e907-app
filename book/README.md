@@ -237,7 +237,8 @@
 | 第 0 部分 | 初稿完成（第 0～4 章） |
 | 第 1 部分 | 初稿完成（第 5～10 章） |
 | 第 2 部分 | 初稿完成（第 11～17 章） |
-| 第 3～6 部分 | 大纲完成，正文待写 |
+| 第 3 部分 | 初稿完成（第 18～25 章） |
+| 第 4～6 部分 | 大纲完成，正文待写 |
 
 ### 已写章节
 
@@ -259,6 +260,14 @@
 - [第 15 章 Zephyr 移植：board、DTS、SoC、时钟与引脚](15-zephyr-porting.md)
 - [第 16 章 写 E907 固件：从 hello 到完整桥接](16-e907-firmware.md)
 - [第 17 章 调试 E907：日志、状态、崩溃与丢包](17-debug-e907.md)
+- [第 18 章 启动脚本与持久化](18-boot-scripts-persistence.md)
+- [第 19 章 A7 串口 daemon：线程、队列与背压](19-serial-daemon.md)
+- [第 20 章 从零写 HTTP 与 WebSocket](20-http-websocket.md)
+- [第 21 章 HTTPS、证书与令牌](21-https-certs-tokens.md)
+- [第 22 章 BLE、BlueZ 与 GATT](22-ble-bluez-gatt.md)
+- [第 23 章 linkr-ble 源码精读](23-linkr-ble-source.md)
+- [第 24 章 吞吐、分片与可靠性](24-throughput-fragmentation.md)
+- [第 25 章 Wi-Fi 与网络配置](25-wifi-network.md)
 
 > 这本书会按章迭代。先把第 0 部分读透，再进入硬件。
 > 如果你在某一章卡住，先回到上一章的“验收”，不要硬跳。

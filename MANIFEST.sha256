@@ -22,7 +22,15 @@ c2b4c56d95cd8510c0e53797aeed8414  ./book/14-zephyr-intro.md
 428aa9a723a628bb9ac5b001a332d38b  ./book/15-zephyr-porting.md
 f9294f23c1546ce5e699ab635e3308ae  ./book/16-e907-firmware.md
 f681e7afdbdccc245680cae1d9530eed  ./book/17-debug-e907.md
-9d3f8584fed199a7ab5422d1f91cb332  ./book/README.md
+bc5b7e4034e70554d55fa54e17c5db1c  ./book/18-boot-scripts-persistence.md
+8ba84704a58226819bed22e5a207939e  ./book/19-serial-daemon.md
+f835427ab98f471a4c484a6d6225a865  ./book/20-http-websocket.md
+c5952b0f7365719bac4dee2c13685e0f  ./book/21-https-certs-tokens.md
+36b5a27459705fb951dc27f97d51094a  ./book/22-ble-bluez-gatt.md
+aa25141b445515da6ab1649083ea57cc  ./book/23-linkr-ble-source.md
+202f9c715ff337970df269666c77de60  ./book/24-throughput-fragmentation.md
+42cbb347502ab36e129de48cfd5731d6  ./book/25-wifi-network.md
+4faf12a6a82221472ee5c9bdf7c952ef  ./book/README.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
 9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md
