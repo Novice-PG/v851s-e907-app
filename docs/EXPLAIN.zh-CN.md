@@ -4,7 +4,7 @@
 > 你不需要先懂 Linux 内核、RISC-V、蓝牙协议；文中遇到新词会先解释，
 > 再告诉你它在哪个文件、哪一行、为什么这么写。
 >
-> 事实基准：本仓库的 v12 版本（2026-11-13），板子为 YuzukiPI-Lizard
+> 事实基准：本仓库的 v12 版本（2026-11-14），板子为 YuzukiPI-Lizard
 > （全志 V851S / sun8iw21p1），A7 跑 Tina Linux 4.9.191，E907 跑
 > Zephyr 4.5.0。不同日期的镜像可能在版本号、地址上有差异，但架构不变。
 
@@ -672,12 +672,15 @@ Zephyr 的构建系统会自动处理链接脚本、资源表、设备树。
 
 ```sh
 export ZEPHYR_BASE=/path/to/zephyr   # 带 v851s BSP 的分支
-west build -b v851s_e907 apps/e907_bringup
+cmake -B build -GNinja -DBOARD=v851s_e907 .
+ninja -C build
 ```
 
 产物：
 
-- `build/zephyr/zephyr.elf`：remoteproc 加载它。
+- `build/zephyr/zephyr_e907.elf`：remoteproc 加载它（仓库里存为
+  `firmware/zephyr_e907.elf`）。`CONFIG_KERNEL_BIN_NAME` 已设为
+  `zephyr_e907`；
 - `.resource_table` 段必须存在，否则 Linux 拒绝启动。
 - 板内复制成两个名字：`/lib/firmware/e907_firmware.elf`（启动脚本用）
   和 `/lib/firmware/zephyr.elf`（设备树 `firmware-name` 用）。
@@ -1248,7 +1251,7 @@ daemon emit_event()
 - `v851s-lizard-tina` 涉及全志 SDK 的构建补丁、板级文件、镜像，
   受全志 EULA 约束，不公开分发。
 - 两边通过 `apply.sh` 连接：lizard 仓库从 `v851s-e907-app` 取
-  `linkr-bee/a7/` 和 `firmware/e907_firmware.elf`，装进 SDK 的
+  `linkr-bee/a7/` 和 `firmware/zephyr_e907.elf`，装进 SDK 的
   staging rootfs。
 
 ### 8.2 依赖图

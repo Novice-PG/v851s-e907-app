@@ -2,13 +2,14 @@
 1072616cafbba7878f86f5b991870d7d  ./CMakeLists.txt
 fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 388843da39f6297b0b5fb3b8ad88416d  ./NOTICE
-2812b47c71fe7b09d7cca0101a4d428d  ./README.md
-a2d3be5d116ab4e1578980889d7dc6c6  ./README.zh-CN.md
+a9f855ef8713ebe9b1297933a8b7dedd  ./README.md
+ef55e59c9a1ba46cea59fecd4078d75a  ./README.zh-CN.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
-98964765ad13c7d0c8ce3dbe6ff8f0a4  ./docs/EXPLAIN.zh-CN.md
+9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md
 bd964b881d0db1d6ddbce45aad8e63ab  ./docs/PROTOCOL.md
 39bfebb313dd6710afcf1c4e107e6f2f  ./docs/REVIEW.md
+56502f7c8c8157ecab437753a6894a04  ./docs/TALK.zh-CN.md
 41e41bc6c09c4de399d4cf8ce2e9c872  ./firmware/zephyr_e907.elf
 3b83ef96387f14655fc854ddc3c6bd57  ./linkr-bee/LICENSE
 22081acc7621a2423faeddaf0397f6a4  ./linkr-bee/README.md

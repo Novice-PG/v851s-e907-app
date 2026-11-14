@@ -68,7 +68,8 @@ A7 侧（板内镜像已自带）：`/usr/bin/linkr-bee-daemon`、`/usr/bin/link
 页面地址是 `https://<板子 IP>:8443/`（自签名，见 `docs/DEPLOY.md`），否则是
 `http://<板子 IP>/`。重新编译见 [docs/BUILD.md](docs/BUILD.md)，更新运行中的
 板子见 [docs/DEPLOY.md](docs/DEPLOY.md)，完整讲解见
-[docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md)。
+[docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md)，小白讲解稿见
+[docs/TALK.zh-CN.md](docs/TALK.zh-CN.md)。
 
 ## 来源与版本
 

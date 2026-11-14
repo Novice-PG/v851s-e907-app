@@ -72,7 +72,8 @@ A7 side, on the board (already installed by the board image):
 `https://<board>:8443/` (self-signed; see `docs/DEPLOY.md`), otherwise at
 `http://<board>/`. See [docs/BUILD.md](docs/BUILD.md) to rebuild and
 [docs/DEPLOY.md](docs/DEPLOY.md) to update a running board. A detailed
-Chinese walkthrough lives in [docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md).
+Chinese walkthrough lives in [docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md);
+a beginner-friendly lecture script is in [docs/TALK.zh-CN.md](docs/TALK.zh-CN.md).
 
 ## Provenance
 
