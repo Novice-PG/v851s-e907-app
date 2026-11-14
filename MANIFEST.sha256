@@ -30,7 +30,13 @@ c5952b0f7365719bac4dee2c13685e0f  ./book/21-https-certs-tokens.md
 aa25141b445515da6ab1649083ea57cc  ./book/23-linkr-ble-source.md
 202f9c715ff337970df269666c77de60  ./book/24-throughput-fragmentation.md
 42cbb347502ab36e129de48cfd5731d6  ./book/25-wifi-network.md
-4faf12a6a82221472ee5c9bdf7c952ef  ./book/README.md
+414048e910ca8e7cdd1031eda21ca24b  ./book/26-web-frontend.md
+b502fd5ce3a703ac4b9c9134e2991715  ./book/27-web-adaptation-patches.md
+1834e7926f43dfd5437c1efd8e823dca  ./book/28-tui.md
+f94c8a60971a3517771e9f9b6d41ecd0  ./book/29-cli.md
+3538775475f9bbdfaf3057fb48cdbb23  ./book/30-android-ble.md
+cae26ec4b852129b7896d224b04b3a27  ./book/31-protocol-unification.md
+4843f21f1c28f9069c386a8c8226009f  ./book/README.md
 55cd7a1350d5176846a1119fe723702d  ./docs/BUILD.md
 dfe5edfd1bd77dbc7c399a43efff0345  ./docs/DEPLOY.md
 9f7f047e2151a00b929907e8d8fc4cd4  ./docs/EXPLAIN.zh-CN.md

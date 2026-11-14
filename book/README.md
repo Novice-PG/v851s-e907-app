@@ -238,7 +238,8 @@
 | 第 1 部分 | 初稿完成（第 5～10 章） |
 | 第 2 部分 | 初稿完成（第 11～17 章） |
 | 第 3 部分 | 初稿完成（第 18～25 章） |
-| 第 4～6 部分 | 大纲完成，正文待写 |
+| 第 4 部分 | 初稿完成（第 26～31 章） |
+| 第 5～6 部分 | 大纲完成，正文待写 |
 
 ### 已写章节
 
@@ -268,6 +269,12 @@
 - [第 23 章 linkr-ble 源码精读](23-linkr-ble-source.md)
 - [第 24 章 吞吐、分片与可靠性](24-throughput-fragmentation.md)
 - [第 25 章 Wi-Fi 与网络配置](25-wifi-network.md)
+- [第 26 章 Web 前端基础](26-web-frontend.md)
+- [第 27 章 linkr-bee Web 适配：五个补丁](27-web-adaptation-patches.md)
+- [第 28 章 TUI 终端应用](28-tui.md)
+- [第 29 章 CLI 工具](29-cli.md)
+- [第 30 章 Android BLE 客户端](30-android-ble.md)
+- [第 31 章 协议统一](31-protocol-unification.md)
 
 > 这本书会按章迭代。先把第 0 部分读透，再进入硬件。
 > 如果你在某一章卡住，先回到上一章的“验收”，不要硬跳。
