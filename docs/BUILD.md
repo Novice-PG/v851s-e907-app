@@ -7,15 +7,21 @@ support come from the Zephyr `v851s` BSP branch (see the main project's
 `west.yml`); nothing vendor-specific is vendored here.
 
 ```sh
-export ZEPHYR_BASE=/path/to/zephyr          # branch with the V851S BSP
-cd /path/to/apps                            # this repository's parent layout
-west build -b yuzuki_lizard_v851s/e907 e907_bringup
+export ZEPHYR_BASE=/path/to/zephyr      # branch with the V851S BSP
+cmake -B build -GNinja -DBOARD=v851s_e907 /path/to/v851s-e907-app
+ninja -C build
 ```
+
+From a west workspace the same build is
+`west build -b v851s_e907 /path/to/v851s-e907-app`.
 
 Expected artefacts:
 
-- `build/zephyr/zephyr.elf` — loaded by the A7 remoteproc driver from
-  `/lib/firmware/e907_firmware.elf` (and `zephyr.elf`, a copy);
+- `build/zephyr/zephyr_e907.elf` — `prj.conf` sets
+  `CONFIG_KERNEL_BIN_NAME="zephyr_e907"`. Copy it to
+  `firmware/zephyr_e907.elf`; the A7 side installs the same file as
+  `/lib/firmware/e907_firmware.elf` (the name `start_e907` writes to the
+  remoteproc `firmware` attribute);
 - the `.resource_table` section must be present, otherwise Linux refuses to
   start the remote processor.
 
@@ -40,12 +46,15 @@ Install as `/usr/bin/linkr-bee-daemon` (mode 0755). It is run by
 `/etc/init.d/S53linkr`:
 
 ```sh
-python3 -u /usr/bin/linkr-bee-daemon --port 80 --tls-port 0 \
+python3 -u /usr/bin/linkr-bee-daemon --port 80 --tls-port 8443 \
+        --cert /mnt/UDISK/persist/certs/linkr-bee.crt \
+        --key /mnt/UDISK/persist/certs/linkr-bee.key \
         --web-root /usr/share/linkr-bee/web
 ```
 
-`--tls-port 0` disables HTTPS. Web Bluetooth needs a secure context, so pass a
-real port only after installing a certificate (see below).
+`S53linkr` selects the certificate automatically and passes 8443; with no
+certificate it starts the daemon without TLS (HTTP only). Web Bluetooth needs
+a secure context, so install a certificate (see below) to use it.
 
 ### linkr-ble
 
@@ -88,6 +97,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
   -config linkr-bee/a7/certs/san.cnf -extensions v3
 ```
 
-Copy both into `/usr/share/linkr-bee/certs/` on the board. `S53linkr` then
-starts the daemon with `--tls-port 8443` automatically; without the pair it
-passes 0 and only HTTP is served. Set `TLS_PORT` to change the port.
+Copy both into `/mnt/UDISK/persist/certs/` on the board (preferred: survives a
+rootfs reflash, and keeps the key out of any image) or into
+`/usr/share/linkr-bee/certs/`. `S53linkr` then starts the daemon with
+`--tls-port 8443` automatically; without the pair it serves HTTP only. Set
+`TLS_PORT` to change the port.

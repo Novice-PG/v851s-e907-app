@@ -134,7 +134,11 @@ On the board:
 md5sum /usr/bin/linkr-bee-daemon /usr/bin/linkr-ble \
        /etc/init.d/S53linkr /etc/init.d/S54bluetooth
 hciconfig hci0; pidof bluetoothd linkr-ble
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1/          # 301
+curl -sk -o /dev/null -w '%{http_code}\n' https://127.0.0.1:8443/   # 200
 ```
 
-Expected md5 values are listed in `linkr-bee/verify.sh`.
+`linkr-bee/verify.sh <rootfs>` compares each installed file against the copy in
+this repository (it does not print a fixed list of digests). Plain
+`http://<board>/` answers `301` to the HTTPS listener; `/ws` stays usable over
+plain WebSocket for scripts.

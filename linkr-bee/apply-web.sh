@@ -50,7 +50,7 @@ md5sum web/index.html web/app.js web/local_download.js \
 echo
 echo "expected:"
 echo "39f8ce3c04cde21152e0d3e09a7b4b74  web/index.html"
-echo "8fcb8095b583945b65ee55aa7d933851  web/app.js"
+echo "839bea52e730f36393657a2c4e994e1c  web/app.js"
 echo "8fa8feb9f17e51009a9340fc15e35f92  web/local_download.js"
 echo "1575e4a0d5d93babcd5d697298ce3f07  web/agent_task_state.js"
 echo "fd08119b6db4467aab171fc12df28acf  web/sha256_fallback.js"

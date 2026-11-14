@@ -23,7 +23,7 @@ upstreamable work.
    agent flows. `web/sha256_fallback.js` uses WebCrypto when present and a
    pure-JS SHA-256 otherwise (verified against WebCrypto for sizes 0–100 KB).
 
-Both patches apply cleanly on upstream `d9b2e00` and reproduce the snapshot
+All five patches apply cleanly on upstream `d9b2e00` and reproduce the snapshot
 byte for byte (`linkr-bee/verify.sh`).
 
 ### A7 integration (V851S only)
@@ -35,12 +35,13 @@ byte for byte (`linkr-bee/verify.sh`).
 - `linkr_ble.c`: BlueZ 5.54 GATT server exposing NUS, Linkr Management
   Service v1 and Reliable UART Service v1, plus a manual
   `HCI_OP_LE_SET_ADV_DATA`/`SCAN_RSP` path because the Allwinner 4.9 kernel
-  comments those commands out of `hci_event.c`.
+  comments those commands out of `hci_request.c`.
 - `S53linkr` / `S54bluetooth`: boot ordering (XR829 firmware and `wlan0`
   before `hciattach`, `hciattach` from a clean state, `bluetoothd` after
-  `hci0`, then `linkr-ble`), bond persistence via bind mount onto UDISK.
-- `main.conf`: `Channels = 1`, because the 4.9 kernel has no EATT PSM and the
-  default of 3 makes `bluetoothd` fail to create its socket.
+  `hci0`, then `linkr-ble`), bond persistence via a bind mount of
+  `/mnt/UDISK/persist/bluetooth` over `/etc/lib/bluetooth`.
+- `main.conf`: `EATTChannels = 1`, because the 4.9 kernel has no EATT PSM and
+  the default of 3 makes `bluetoothd` fail to create its socket.
 
 ## Findings
 
@@ -96,6 +97,36 @@ considered verified. The protocol is unchanged.
    through the same dispatcher as the BLE Management Service, and async
    events (scan results, Wi-Fi state) are written as ordinary text frames the
    page already parses.
+
+### Robustness fixes (2026-11-14)
+
+11. **EATT key name in the boot script.** `S54bluetooth` edited
+    `Channels = 1`, which BlueZ 5.54 ignores; it parses `EATTChannels`. The
+    shipped `main.conf` already had the right key, so the service worked, but
+    a replaced config silently re-enabled EATT. The script now edits
+    `EATTChannels` and appends it under `[GATT]` if the key is absent.
+12. **Bond data was mounted on the wrong path.** BlueZ is built with
+    `--localstatedir=/etc`, so adapter state lives in `/etc/lib/bluetooth`,
+    not `/var/lib/bluetooth` (`/var` is tmpfs here). The bind mount now
+    targets `/etc/lib/bluetooth` and migrates existing overlay state on the
+    first boot, without overwriting a populated data partition.
+13. **`@i?` fallback buffer size.** With no `LINKRSTAT` reply the daemon
+    reported 16 KiB rings although the E907 uses 64 KiB. The fallback is now
+    65536.
+14. **Stale control reply.** A timed-out `LINKRCFG`/`LINKRSTAT` request left a
+    partial line in `_ctl_pending`, which prefixed the next reply. The buffer
+    is cleared when a request finishes, and again before the next one starts.
+15. **Slow WSS client blocked serial forwarding.** The TLS listener never set
+    `SO_SNDTIMEO` (the plain listener did), so `broadcast()` on the rpmsg RX
+    thread could block forever on `sendall()`. The TLS connection now has the
+    same 10 s send timeout, and the TLS handshake itself is bounded to 10 s
+    so a silent client cannot stall the accept loop.
+16. **rpmsg RX thread died on handler errors.** Only `OSError` was caught
+    around `on_data()`; any other exception killed the pump until the daemon
+    restarted, leaving the console TX-only. Handler exceptions are now logged
+    and the loop keeps running.
+17. **Unused `MAX_CLIENTS`.** The constant promised a four-client cap that was
+    never enforced; it is removed and `PROTOCOL.md` no longer claims a limit.
 
 ### Diagnostics and buffering (2026-11-13)
 
@@ -156,6 +187,7 @@ at a time; the LAN/WSS endpoint is the multi-client path.
 3. The E907 changes above were built and flashed on the reference board;
    the rpmsg handshake, `@u?`/`@u=`, LAN commands and BLE bridge all came up
    again after the reboot. Long-run soak testing is still pending.
+
 ### Known limitations (not bugs)
 
 - **Session ownership is A7-side only.** The E907 bridge is stateless; every
@@ -164,13 +196,16 @@ at a time; the LAN/WSS endpoint is the multi-client path.
 - **`LINKRCFG` replies are filtered by prefix.** A target device that prints
   a line starting with `LINKRCFG ` is swallowed. This is an accepted trade-off
   for a console bridge.
-- **HTTPS is off by default** (`--tls-port 0`). Web Bluetooth needs a secure
-  context, so enabling it requires a certificate on the board; the private key
-  is generated per board and never committed.
+- **HTTPS starts automatically when a certificate is present.** `S53linkr`
+  looks for `/mnt/UDISK/persist/certs/linkr-bee.{crt,key}` and then
+  `/usr/share/linkr-bee/certs/`; with no certificate the daemon logs that
+  HTTPS is disabled and only serves HTTP. The private key is generated per
+  board and never committed.
 - **BLE advertising name** is stored in `/mnt/UDISK/persist/ble-name`; if the
   data partition is missing the name falls back to `Linkr Bee V851S`.
 - **Bond data** lives in `/mnt/UDISK/persist/bluetooth`, bind-mounted over
-  `/var/lib/bluetooth`. Re-flashing the data partition loses pairings.
+  `/etc/lib/bluetooth` (BlueZ is built with `--localstatedir=/etc`).
+  Re-flashing the data partition loses pairings.
 
 ## Not done / next steps
 

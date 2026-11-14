@@ -61,7 +61,8 @@ docs/
 E907 firmware (needs a Zephyr checkout with the `v851s` BSP):
 
 ```sh
-west build -b v851s_e907 apps/e907_bringup
+cmake -B build -GNinja -DBOARD=v851s_e907 .   # from this repository root
+ninja -C build                                # -> build/zephyr/zephyr_e907.elf
 ```
 
 A7 side, on the board (already installed by the board image):
@@ -70,7 +71,8 @@ A7 side, on the board (already installed by the board image):
 `/usr/share/linkr-bee/certs/` the page is served at
 `https://<board>:8443/` (self-signed; see `docs/DEPLOY.md`), otherwise at
 `http://<board>/`. See [docs/BUILD.md](docs/BUILD.md) to rebuild and
-[docs/DEPLOY.md](docs/DEPLOY.md) to update a running board.
+[docs/DEPLOY.md](docs/DEPLOY.md) to update a running board. A detailed
+Chinese walkthrough lives in [docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md).
 
 ## Provenance
 

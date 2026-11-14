@@ -25,6 +25,7 @@ import json
 import os
 import re
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -34,7 +35,6 @@ import urllib.parse
 import urllib.request
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-MAX_CLIENTS = 4
 OWNER_IDLE_SECONDS = 3.0
 MAX_FRAME = 1 << 20
 
@@ -199,7 +199,13 @@ class RpmsgBridge:
                     data = os.read(self.fd, 4096)
                     if not data:
                         raise OSError("endpoint closed")
-                    self.on_data(data)
+                    try:
+                        self.on_data(data)
+                    except Exception as exc:  # noqa: BLE001 - keep the pump alive
+                        # A malformed control reply must not kill the RX
+                        # thread; otherwise the console goes TX-only until
+                        # the daemon is restarted.
+                        log("rpmsg RX handler error: %s" % exc)
             except OSError as exc:
                 log("rpmsg RX stopped: %s" % exc)
             finally:
@@ -1075,6 +1081,7 @@ class Session:
         with self._ctl_lock:
             self._ctl_event.clear()
             self._ctl_reply = ""
+            self._ctl_pending = None
             self._ctl_waiting = True
             try:
                 try:
@@ -1087,6 +1094,9 @@ class Session:
                 return self._ctl_reply
             finally:
                 self._ctl_waiting = False
+                # A reply that arrived too late (or was cut off mid-line)
+                # must not prefix the next LINKRCFG/LINKRSTAT response.
+                self._ctl_pending = None
 
     def _send_uart_ctl(self, payload, timeout=4.0):
         """Send a `LINKRCFG` line to the E907 and wait for its reply."""
@@ -1361,8 +1371,8 @@ class Session:
             "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
             "@info uart dropped=%d dropped_no_conn=0 buffer=%d/%d "
             "tx=%d/%d tx_dropped=%d\r\n" % (
-                dropped, stat.get("rx_used", 0), stat.get("rx_size", 16384),
-                stat.get("tx_used", 0), stat.get("tx_size", 16384),
+                dropped, stat.get("rx_used", 0), stat.get("rx_size", 65536),
+                stat.get("tx_used", 0), stat.get("tx_size", 65536),
                 stat.get("tx_dropped", 0)),
             "@info wifi state=%s ip=%s\r\n" % (
                 "connected" if connected else "off",
@@ -1799,7 +1809,6 @@ def serve_ble_socket(session):
 def serve_tls(bind, port, web_root, session, cert, key):
     """HTTPS listener. Web Bluetooth needs a secure context, so the same
     page is also served over TLS when a certificate is available."""
-    import ssl
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
@@ -1815,18 +1824,32 @@ def serve_tls(bind, port, web_root, session, cert, key):
             log("https accept failed: %s" % exc)
             time.sleep(0.5)
             continue
-        try:
-            conn = ctx.wrap_socket(conn, server_side=True)
-        except (ssl.SSLError, OSError) as exc:
-            log("https handshake from %s:%d failed: %s" % (addr[0], addr[1], exc))
-            try:
-                conn.close()
-            except OSError:
-                pass
-            continue
-        threading.Thread(target=handle_connection,
-                         args=(conn, addr, web_root, session),
+        # The handshake runs in its own thread: a client that connects and
+        # sends nothing must not stall the accept loop (and with it every
+        # other HTTPS client).
+        threading.Thread(target=_tls_connection,
+                         args=(ctx, conn, addr, web_root, session),
                          daemon=True).start()
+
+
+def _tls_connection(ctx, conn, addr, web_root, session):
+    try:
+        conn.settimeout(10.0)
+        conn = ctx.wrap_socket(conn, server_side=True)
+        conn.settimeout(None)
+        # Same slow-client guard as the plain listener: broadcast() runs on
+        # the rpmsg RX thread, so an unbounded sendall() here would stop
+        # serial forwarding for every client.
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO,
+                        struct.pack("ll", 10, 0))
+    except (ssl.SSLError, OSError) as exc:
+        log("https handshake from %s:%d failed: %s" % (addr[0], addr[1], exc))
+        try:
+            conn.close()
+        except OSError:
+            pass
+        return
+    handle_connection(conn, addr, web_root, session)
 
 
 def main():

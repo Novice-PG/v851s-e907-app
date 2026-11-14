@@ -58,7 +58,8 @@ docs/
 E907 固件（需要一个带 `v851s` BSP 的 Zephyr 检出）：
 
 ```sh
-west build -b v851s_e907 apps/e907_bringup
+cmake -B build -GNinja -DBOARD=v851s_e907 .   # 在本仓库根目录执行
+ninja -C build                                # -> build/zephyr/zephyr_e907.elf
 ```
 
 A7 侧（板内镜像已自带）：`/usr/bin/linkr-bee-daemon`、`/usr/bin/linkr-ble`、
@@ -66,7 +67,8 @@ A7 侧（板内镜像已自带）：`/usr/bin/linkr-bee-daemon`、`/usr/bin/link
 `/mnt/UDISK/persist/certs/`（或 `/usr/share/linkr-bee/certs/`）放好每板证书后，
 页面地址是 `https://<板子 IP>:8443/`（自签名，见 `docs/DEPLOY.md`），否则是
 `http://<板子 IP>/`。重新编译见 [docs/BUILD.md](docs/BUILD.md)，更新运行中的
-板子见 [docs/DEPLOY.md](docs/DEPLOY.md)。
+板子见 [docs/DEPLOY.md](docs/DEPLOY.md)，完整讲解见
+[docs/EXPLAIN.zh-CN.md](docs/EXPLAIN.zh-CN.md)。
 
 ## 来源与版本
 

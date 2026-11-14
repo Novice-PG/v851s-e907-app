@@ -11,7 +11,7 @@ and `radxa/linkr-bee` stay untouched.
 | `a7/linkr_ble.c` | — | source of `linkr-ble` |
 | `a7/S53linkr` | `/etc/init.d/S53linkr` | starts the LAN/WebSocket daemon (HTTP 80 + HTTPS 8443 when a cert exists) |
 | `a7/S54bluetooth` | `/etc/init.d/S54bluetooth` | XR829 BT + bluetoothd + linkr-ble |
-| `a7/main.conf` | `/etc/bluetooth/main.conf` | BlueZ config (`Channels = 1`) |
+| `a7/main.conf` | `/etc/bluetooth/main.conf` | BlueZ config (`EATTChannels = 1`) |
 | `a7/ble-adv-data.py` | `/usr/bin/ble-adv-data.py` | pushes LE ADV/SCAN_RSP the 4.9 kernel drops |
 | `a7/certs/san.cnf` | `/usr/share/linkr-bee/certs/` | certificate template (key is per board) |
 | `a7/S99linkrbee.legacy` | — | previous boot script, reference only |
@@ -38,8 +38,10 @@ the review of this adaptation.
 | Patched `web/agent_task_state.js` | `1575e4a0d5d93babcd5d697298ce3f07` |
 | New `web/sha256_fallback.js` | `fd08119b6db4467aab171fc12df28acf` |
 
-The patches only touch those two files. `snapshot/web/` exists so the board
-tree can be recovered even if the upstream checkout is lost.
+The five patches touch `web/index.html`, `web/app.js`,
+`web/local_download.js`, `web/agent_task_state.js` and add
+`web/sha256_fallback.js`. `snapshot/web/` exists so the board tree can be
+recovered even if the upstream checkout is lost.
 
 ## Licence
 

@@ -42,20 +42,28 @@ say() {
 }
 
 start_dbus() {
-	mkdir -p /var/run/dbus /var/lib/dbus /var/lib/bluetooth
+	mkdir -p /var/run/dbus /var/lib/dbus /etc/lib/bluetooth
 	dbus-uuidgen --ensure 2>/dev/null
 	if ! pidof dbus-daemon >/dev/null 2>&1; then
 		dbus-daemon --system --fork 2>/dev/null
 	fi
 
-	# /var lives on tmpfs, so bonds/LTKs would be lost on every reboot.
-	# Bind BlueZ storage onto UDISK, but only once (S30persist has already
-	# mounted it by the time we run).
+	# BlueZ in this image is built with --localstatedir=/etc, so bonds and
+	# LTKs live in /etc/lib/bluetooth.  /etc is overlayfs on UDISK: it
+	# survives a reboot but not a reflash of the rootfs, so keep the adapter
+	# state on the data partition instead.
+	BTSTORE=/etc/lib/bluetooth
 	PERSIST=/mnt/UDISK/persist/bluetooth
 	if grep -q ' /mnt/UDISK ' /proc/mounts 2>/dev/null &&
-	   ! grep -qE ' (/var|/tmp)/lib/bluetooth ' /proc/mounts; then
+	   ! grep -q " $BTSTORE " /proc/mounts; then
 		mkdir -p "$PERSIST" 2>/dev/null
-		mount -o bind "$PERSIST" /var/lib/bluetooth 2>/dev/null
+		# First boot after the upgrade: migrate the state BlueZ already
+		# wrote to the overlay.  Never overwrite a populated PERSIST, or
+		# every boot would resurrect bonds that were removed since.
+		if ! ls "$PERSIST"/*/settings >/dev/null 2>&1; then
+			cp -a "$BTSTORE/." "$PERSIST/" 2>/dev/null
+		fi
+		mount -o bind "$PERSIST" "$BTSTORE" 2>/dev/null
 	fi
 
 	i=0
@@ -117,8 +125,14 @@ try_attach() {
 start_services() {
 	# Make sure EATT stays off: the 4.9 kernel has no EATT PSM support and
 	# bluetoothd would fail to create its sockets with the default of 3.
+	# BlueZ parses "EATTChannels"; the pre-5.55 key name "Channels" is
+	# silently ignored.
 	if [ -f "$MAINCONF" ]; then
-		sed -i 's/^#*Channels *= *[0-9]*/Channels = 1/' "$MAINCONF"
+		if grep -q '^#*EATTChannels' "$MAINCONF"; then
+			sed -i 's/^#*EATTChannels *= *[0-9]*/EATTChannels = 1/' "$MAINCONF"
+		else
+			sed -i '/^\[GATT\]/a EATTChannels = 1' "$MAINCONF"
+		fi
 	fi
 
 	killall bluetoothd 2>/dev/null

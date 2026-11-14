@@ -45,15 +45,15 @@ payload[length]
 | Type | Name | Direction | Payload |
 |---|---|---|---|
 | `0x01` | DATA | both | serial bytes |
-| `0x02` | CTL_REQ | BLE → daemon | `reqid u32 LE, flags u16 LE, text` |
-| `0x03` | CTL_RSP | daemon → BLE | `reqid u32 LE, flags u16 LE, text` |
-| `0x10` | HELLO | BLE → daemon | adapter/name info |
+| `0x02` | CTL_REQ | BLE → daemon | `reqid u32 LE, text` |
+| `0x03` | CTL_RSP | daemon → BLE | `reqid u32 LE, text` |
+| `0x10` | HELLO | BLE → daemon | ASCII `linkr-ble` |
 | `0x11` | NAME | daemon → BLE | new advertised name (UTF-8, ≤29 bytes) |
 | `0x12` | EVENT | daemon → BLE | `reqid u32 LE, flags u16 LE, text` (async) |
 
-`flags` bit 0 means "final", bit 1 means "error". Control text is the same
-`@...` command language the WebSocket uses (`@c?`, `@c claim`, `@u?`, `@n=`,
-`@s?`, …).
+`flags` exists only in EVENT frames; bit 0 means "final", bit 1 means "error".
+Control text is the same `@...` command language the WebSocket uses (`@c?`,
+`@c claim`, `@u?`, `@n=`, `@s?`, …).
 
 ## 3. Browser ↔ daemon: WebSocket
 
@@ -75,7 +75,7 @@ token within 3 s. `@s token off` removes it again. The token is stored (mode
 `/mnt/UDISK/persist/ws-token` and managed with `@s token=<32 hex>`,
 `@s token off` and `@s?`.
 
-Session control is shared by up to four clients:
+Session control is shared by all connected clients:
 
 - a client is **claimed** on its first serial write, or explicitly with
   `@c claim`;
