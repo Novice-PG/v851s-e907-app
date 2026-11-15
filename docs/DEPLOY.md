@@ -60,6 +60,14 @@ chmod 0755 /usr/bin/linkr-bee-daemon
 
 `sz`/`rz` (ZMODEM) also works if `busybox` was built with it.
 
+## Serial rescue tools
+
+`tools/flash/` holds the host-side helpers for the UART rescue path:
+`ubi_stream.py` (host) + `ubi_recv.c` (board) write a raw image into a UBI
+volume, `uart_push.py` copies a file into a running system, and
+`uboot_enter.py` / `uboot_cmd.py` / `uart_flash_bootpkg.py` drive U-Boot.
+See `tools/flash/README.md` and `book/33-flashing-and-rescue.md`.
+
 ## E907 firmware
 
 `firmware/zephyr_e907.elf` is built from `src/`. On the board the remoteproc

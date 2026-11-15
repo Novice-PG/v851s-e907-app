@@ -6,6 +6,7 @@ Original work in this repository
 
   src/, prj.conf, CMakeLists.txt   E907 Zephyr application
   tools/                           rpmsg test and benchmark
+  tools/flash/                     serial flashing and rescue helpers
   linkr-bee/a7/linkr_ble.c         BlueZ GATT server (source)
   linkr-bee/a7/linkr-bee-daemon    A7 Python bridge (source)
   linkr-bee/a7/S53linkr,
