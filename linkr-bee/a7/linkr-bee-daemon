@@ -1378,15 +1378,16 @@ class Session:
         connected, info = _wifi_status()
         stat = self._bridge_stat() or {}
         dropped = (stat.get("rx_dropped", 0) + stat.get("tx_dropped", 0))
+        # Keep the collection under one ATT notification: the Management
+        # response is a single indication, and a payload that pushes the
+        # 12-byte header past 512 octets has to be split into two indications,
+        # which the browser reassembler has proven to mishandle.  Only the
+        # fields the web UI actually renders are kept here.
         lines = [
-            "@info fw version=%s zephyr=4.5.0 uart_ring=65536 "
-            "features=rpmsg,uart-reconfig,lan-ble\r\n" % fw_version,
+            "@info fw version=%s zephyr=4.5.0\r\n" % fw_version,
             "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
-            "@info uart dropped=%d dropped_no_conn=0 buffer=%d/%d "
-            "tx=%d/%d tx_dropped=%d\r\n" % (
-                dropped, stat.get("rx_used", 0), stat.get("rx_size", 65536),
-                stat.get("tx_used", 0), stat.get("tx_size", 65536),
-                stat.get("tx_dropped", 0)),
+            "@info uart dropped=%d buffer=%d/%d\r\n" % (
+                dropped, stat.get("rx_used", 0), stat.get("rx_size", 65536)),
             "@info wifi state=%s ip=%s\r\n" % (
                 "connected" if connected else "off",
                 info["ip"] or "down"),
@@ -1749,11 +1750,17 @@ class BleClient:
                         # A rejected write must be visible to the phone.
                         # There is no request id on a data frame, so report
                         # it as an async error event (reqid 0) instead of
-                        # dropping it silently.
+                        # dropping it silently.  The "ERR control=..." line
+                        # flips the app into read-only mode; a second,
+                        # non-control line makes the rejection explicit in
+                        # the terminal so the user knows bytes were dropped.
                         log("ble bridge %d write rejected: %s" %
                             (self.id, reply.strip()))
                         self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
                                         reply)
+                        self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
+                                        "write rejected: console is "
+                                        "controlled by another client\r\n")
                 elif ftype == FRAME_CTL_REQ and len(payload) >= 4:
                     reqid = struct.unpack("<I", payload[:4])[0]
                     text = payload[4:].decode("utf-8", "replace")

@@ -207,6 +207,23 @@ bring_up() {
 		say "BT address $btmac (from $wmac)"
 	fi
 
+	# Drop bonds stored under any previous Bluetooth address (a replaced
+	# board or a re-burned efuse MAC changes wlan0/address and therefore
+	# btmac).  A stale bond under the old address is never used again and
+	# only makes a client that cached it fail to reconnect.
+	if [ -n "$btmac" ]; then
+		btmac_upper=$(echo "$btmac" | tr 'a-f' 'A-F')
+		for d in /mnt/UDISK/persist/bluetooth/*; do
+			[ -d "$d" ] || continue
+			case "$(basename "$d")" in
+				22:22:*)
+					[ "$(basename "$d")" = "$btmac_upper" ] ||
+						rm -rf "$d"
+					;;
+			esac
+		done
+	fi
+
 	# Let the first post-association scan burst finish before we touch the
 	# shared XR829 BT side.
 	sleep 5

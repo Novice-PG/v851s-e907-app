@@ -88,7 +88,13 @@
 /* ATT value size for notifications/indications.  BlueZ truncates silently to
  * MTU-3, so a fixed larger value loses bytes on small-MTU peers.  bluetoothd
  * publishes each peer's negotiated MTU under /var/run/linkr-bt-mtu (patched
- * for linkr); start at the BLE 4.0 default and grow once it is known. */
+ * for linkr); start at the BLE 4.0 default and grow once it is known.
+ *
+ * The upper bound is 512, not MTU-3: BLE Core Spec caps the attribute value
+ * at 512 octets ("Long Attribute Values"), so a chunk of 514 (MTU 517 - 3)
+ * overflows Web Bluetooth/Chrome and gets truncated, desynchronising the
+ * management frame reassembler (observed as "oversized management response"
+ * and a timed-out reply on the next command). */
 #define LINKR_MTU_DIR "/var/run/linkr-bt-mtu"
 static gsize att_chunk = 20;
 
@@ -1155,8 +1161,8 @@ static void refresh_att_chunk(gint64 now)
 	if (min_mtu > 3) {
 		gsize chunk = min_mtu - 3;
 
-		if (chunk > 514) {
-			chunk = 514;
+		if (chunk > 512) {
+			chunk = 512;
 		}
 		if (chunk < 20) {
 			chunk = 20;
