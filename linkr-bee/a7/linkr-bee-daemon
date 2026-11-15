@@ -37,6 +37,10 @@ import urllib.request
 
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 OWNER_IDLE_SECONDS = 3.0
+# A serial write rejected because the UART TX queue is full is reported to
+# the client at most this often, so a large paste does not flood the
+# terminal with one error line per burst.
+TX_FULL_REPORT_INTERVAL = 2.0
 MAX_FRAME = 1 << 20
 
 # Control replies the E907 may put on the rpmsg endpoint; they are stripped
@@ -772,6 +776,7 @@ class Session:
         self._stat_cache = None
         self._stat_at = 0.0
         self.upload_bytes = 0
+        self._tx_full_at = 0.0
 
     # -- rpmsg RX: split control replies from target serial data -----------
 
@@ -1364,7 +1369,15 @@ class Session:
                 self.set_owner(client.id)
             else:
                 self.owner_active = now
-        serial_writer.write(data)
+        accepted = serial_writer.write(data)
+        if accepted < len(data):
+            # The UART TX queue is full and bytes were dropped. Report it
+            # (rate-limited) instead of failing silently.
+            now = time.monotonic()
+            if now - self._tx_full_at >= TX_FULL_REPORT_INTERVAL:
+                self._tx_full_at = now
+                return "ERR serial=tx_full dropped=%d\r\n" % (
+                    len(data) - accepted)
         return None
 
     # -- Linkr Management Service commands (BLE) ---------------------------
@@ -1754,13 +1767,16 @@ class BleClient:
                         # flips the app into read-only mode; a second,
                         # non-control line makes the rejection explicit in
                         # the terminal so the user knows bytes were dropped.
+                        # Other rejections ("ERR serial=...") already render
+                        # as an event line and need no companion.
                         log("ble bridge %d write rejected: %s" %
                             (self.id, reply.strip()))
                         self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
                                         reply)
-                        self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
-                                        "write rejected: console is "
-                                        "controlled by another client\r\n")
+                        if reply.strip().startswith("ERR control="):
+                            self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
+                                            "write rejected: console is "
+                                            "controlled by another client\r\n")
                 elif ftype == FRAME_CTL_REQ and len(payload) >= 4:
                     reqid = struct.unpack("<I", payload[:4])[0]
                     text = payload[4:].decode("utf-8", "replace")

@@ -63,7 +63,7 @@ fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 911c32748a9f2cfb20196cbf3533a147  ./linkr-bee/a7/ble-adv-data.py
 b76bcb7da1a65ea84c349c705ff6e976  ./linkr-bee/a7/certs/san.cnf
 63e9ec05fd3848ffc2b95833877f3e51  ./linkr-bee/a7/legacy/S54bluetooth.off
-6da2d3acade9e9375af00e4031540c19  ./linkr-bee/a7/linkr-bee-daemon
+5184c687971302bfd7b234ff8f319afd  ./linkr-bee/a7/linkr-bee-daemon
 ed308c29d81d74fc50e93cb9b18a6f27  ./linkr-bee/a7/linkr-ble
 f3926b91c4ec73291b46fe454d2e919a  ./linkr-bee/a7/linkr_ble.c
 a2e189861efdc8e00741a9578c49ffb2  ./linkr-bee/a7/main.conf
