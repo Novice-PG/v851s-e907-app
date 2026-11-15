@@ -173,7 +173,7 @@ static void ipm_rx_thread(void *a, void *b, void *c)
 	}
 }
 
-K_THREAD_STACK_DEFINE(ipm_rx_stack, 2048);
+K_THREAD_STACK_DEFINE(ipm_rx_stack, 4096);
 static struct k_thread ipm_rx_thread_data;
 
 /* --- bring-up --- */
@@ -257,7 +257,7 @@ failed:
 	return ret;
 }
 
-static K_THREAD_STACK_DEFINE(openamp_stack, 2048);
+static K_THREAD_STACK_DEFINE(openamp_stack, 4096);
 static struct k_thread openamp_thread;
 
 static void openamp_thread_fn(void *a, void *b, void *c)

@@ -176,10 +176,11 @@ pinctrl-0 = <&uart3_pins>;
 `uart3_pins` 是另一段节点，描述“把哪两个脚切成什么功能”。
 Linux 的 pinctrl 子系统会在 probe 前应用它。
 
-> 这块板的 UART3 引脚却是由 `uart3pin.ko` 和 E907 的
-> `board_early.c` 手工写的。为什么不用 pinctrl？因为
-> Linux 侧把 `&uart3` 关了，E907 又不走 Linux 的 pinctrl 框架。
-> **没有驱动认领的设备，pinctrl 不会自动生效。**
+> 这块板的 UART3 引脚却是由 A7 的 `uart3pin.ko` 手工写的。
+> 为什么不用 pinctrl？因为 Linux 侧把 `&uart3` 关了，**没有驱动
+> 认领的设备，pinctrl 不会自动生效**。E907 的 `board_early.c` 里
+> 也写了一遍同样的 mux，但实测写不进去（见 6.4），真正生效的
+> 只有 A7 侧。
 
 ---
 

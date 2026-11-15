@@ -295,7 +295,8 @@ PE13: bits 20..23 = 7
 十六进制：0x00770000
 ```
 
-这就是 `board_early.c` 和 `uart3pin.c` 里那个“魔法数字”的来源。
+这就是 `uart3pin.c` 里那个“魔法数字”的来源。（`board_early.c`
+里也有一份同样的写入，但实测不生效，见 6.4。）
 
 ### 为什么注释要写推导
 
@@ -313,21 +314,52 @@ PE13: bits 20..23 = 7
 
 ### A7 和 E907 都写了一遍？
 
-v12 里有两处：
+v12 里有两处写同一个寄存器：
 
-1. `uart3pin.ko`（A7 内核模块）：启动 E907 前由 `S52e907` 插入。
+1. `uart3pin.ko`（A7 内核模块）：启动 E907 前由 `start_e907`（`S52e907` 调用）插入。
 2. `board_early.c`（E907 固件）：`SYS_INIT(PRE_KERNEL_1, 0)`。
 
-为什么重复？因为两边都可能成为“第一个摸到引脚的人”：
+看起来是“两边都可能第一个摸到引脚，所以各写一遍”。但实机测试
+（v12 镜像，2026-11）证明：**只有 A7 那一处生效**。
 
-- 正常启动：A7 先跑，模块先把引脚切好，再释放 E907。
-- 调试/复位场景：E907 可能被单独复位，需要自己兜底。
+测试方法：
 
-两处写的是同一个值，谁先生效都不影响结果。**重复但幂等**，
-比“假设对方一定先做”安全。
+**第一步**：把 `/usr/bin/start_e907` 里 `insmod uart3pin.ko` 那一行
+注释掉，重启板子。
 
-> 工程上这叫“防御式初始化”。代价是几行代码，收益是
-> 少一个“偶尔起不来”的玄学问题。
+**第二步**：手动启动 E907，确认 `state=running (2)`、`trace0` 有
+心跳——说明 `board_early.c` 已经跑过。
+
+**第三步**：在 A7 上读 debugfs：
+
+```sh
+echo PE12 > /sys/kernel/debug/sunxi_pinctrl/sunxi_pin
+cat /sys/kernel/debug/sunxi_pinctrl/sunxi_pin_configure
+echo PE13 > /sys/kernel/debug/sunxi_pinctrl/sunxi_pin
+cat /sys/kernel/debug/sunxi_pinctrl/sunxi_pin_configure
+```
+
+结果仍是 `func f`（`io_disabled`，复位默认态），不是 7。
+
+**第四步**：手动 `insmod uart3pin.ko`，同一时刻再读，变成 `func 7`。
+
+也就是说 E907 侧对 PIO（`0x02000000`）的写被静默忽略：不报错，
+也不生效。CCU 里的 UART3 门控写没有单独验证，但能确定它不是
+“引脚能被切到 UART3”的原因。
+
+> 这类“写成功但没效果”最容易被误判成“已经配好了”。判断依据
+> 必须是**读回**，而不是“代码执行到这一行、没有 fault”。
+
+结论：
+
+- pinmux 的唯一真实路径是 A7 的 `uart3pin.ko`（或等价的 A7 侧配置）。
+- `board_early.c` 里的 PIO/CCU 写入是 no-op。保留它不会有害，但
+  不能把它当成“E907 单独复位时的兜底”。
+- 调试 E907 时 UART3 不通，先查 A7 有没有加载 `uart3pin.ko`，
+  不要先怀疑 E907 的初始化顺序。
+
+> “两处都写、幂等”听起来稳妥，但前提是两处都真的能写。
+> 这次实测说明：**没验证过的兜底，等于没有兜底。**
 
 ---
 
@@ -517,9 +549,11 @@ tail -5 /sys/kernel/debug/remoteproc/remoteproc0/trace0
 
 预期能看到 `PE12=7 PE13=7`。
 
-> 注意：E907 能不能读 PIO 取决于总线权限。如果读到全 0 或
-> 触发 fault，不要惊讶——这也解释了为什么 A7 侧还要有
-> `uart3pin.ko`。**先确认“这个核到底有没有权限访问这个外设”。**
+> 注意：E907 能不能访问 PIO/CCU 取决于总线权限。v12 上的实测是
+> **写不生效**：E907 启动完成后从 A7 侧看，PE12/PE13 仍是
+> `func f`；只有 A7 `insmod uart3pin.ko` 才变成 7。所以这个实验
+> 适合确认“寄存器读得到什么”，但不能用来证明“E907 能配置引脚”。
+> 引脚复用请在 A7 侧做。
 
 ---
 

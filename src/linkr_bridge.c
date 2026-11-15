@@ -298,9 +298,14 @@ static int linkr_apply_cfg(char *args, char *reply, size_t reply_len)
 		return snprintk(reply, reply_len, "LINKRCFG ERR=-22\n");
 	}
 
-	baud = strtoul(tok[0], NULL, 10);
-	if (baud < 300 || baud > 4000000) {
-		return snprintk(reply, reply_len, "LINKRCFG ERR=-22\n");
+	{
+		char *end = NULL;
+
+		baud = strtoul(tok[0], &end, 10);
+		if (end == tok[0] || *end != '\0' ||
+		    baud < 300 || baud > 4000000) {
+			return snprintk(reply, reply_len, "LINKRCFG ERR=-22\n");
+		}
 	}
 
 	cfg.baudrate = (uint32_t)baud;
@@ -414,8 +419,9 @@ int linkr_bridge_rpmsg_recv(struct rpmsg_endpoint *ept, const void *data,
 
 	/* "LINKRSTAT\n" reports the current ring occupancy and drop counters so
 	 * the A7 can show real numbers in @i? instead of constants. */
-	if (atomic_get(&bridge_ready) && len >= 9 &&
-	    !memcmp(p, "LINKRSTAT", 9)) {
+	if (atomic_get(&bridge_ready) &&
+	    ((len == 10 && !memcmp(p, "LINKRSTAT\n", 10)) ||
+	     (len == 9 && !memcmp(p, "LINKRSTAT", 9)))) {
 		char reply[128];
 		int n = snprintk(reply, sizeof(reply),
 				 "LINKRSTAT rx=%u/%u tx=%u/%u drop=%u/%u\n",

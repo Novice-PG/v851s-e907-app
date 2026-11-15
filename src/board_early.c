@@ -2,10 +2,17 @@
  * Copyright (c) 2026
  * SPDX-License-Identifier: Apache-2.0
  *
- * Early E907 board init: bring the UART3 console pins + clock up BEFORE the
- * ns16550 console driver initialises.  The V851S Linux side keeps &uart3
- * disabled (UART3 belongs to the E907), and CONFIG_DEVMEM is off on the A7,
- * so the E907 core must set the pin-mux and clock gate itself.
+ * Early E907 board init.  Kept as documentation of the UART3 pin-mux and
+ * clock-gate values; the pin-mux itself is applied by the A7 (see below).
+ *
+ * IMPORTANT (verified on hardware, 2026-11-15): the E907 has NO bus access to
+ * the PIO block (0x02000000).  A write to PE_CFG1 from this core is silently
+ * ignored and the pin keeps reading func 0xf (io_disabled).  The pin-mux is
+ * actually done by the A7, via uart3pin.ko (loaded by /usr/bin/start_e907
+ * before the E907 is started).  The pin-mux write below is therefore a
+ * defensive no-op and must not be relied upon; it is kept only to document
+ * intent.  Whether the CCU clock-gate write (a different region, 0x02001000)
+ * takes effect from the E907 has not been verified.
  *
  * Register values are taken from the vendor Linux 4.9 kernel drivers:
  *   - PIO base 0x02000000, bank spacing 0x30, CFG regs at +0x00

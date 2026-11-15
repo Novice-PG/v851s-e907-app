@@ -31,7 +31,7 @@
 | MSGBOX 节点 | 同上 | 双向门铃、CCU 门控 |
 | DRAM 窗口 | 同上 | 固件加载到 `0x43c00000` |
 | 板级选择 | `boards/yuzuki/v851s_e907/*` | chosen 节点、IPM、共享内存 |
-| 引脚 + 时钟 | `src/board_early.c` | Linux 不管 UART3，必须自己开 |
+| 引脚 + 时钟 | A7 `uart3pin.ko` + `src/board_early.c` | A7 负责 mux；E907 侧保留兜底写入（实测无效） |
 | 构建开关 | `v851s_e907_defconfig` + `prj.conf` | RAM console、XIP 关、驱动选择 |
 
 > 注意最后一行：**引脚和时钟没写进设备树**。这是这块板的
@@ -370,9 +370,12 @@ west build -b v851s_e907 -s samples/hello_world -d build-bringup \
 
 - Linux 侧 `&uart3` 是 `disabled`，没有驱动认领，**pinctrl 不会生效**。
 - A7 内核没开 `CONFIG_DEVMEM`，用户态不能直接写寄存器。
-- E907 的 Zephyr 还没有完整的 CCU/pinctrl 驱动。
+- 所以引脚由 A7 的一个小内核模块 `uart3pin.ko` 在启动 E907 前
+  写好（`start_e907` 里 `insmod`）。
+- E907 的 Zephyr 还没有完整的 CCU/pinctrl 驱动，固件里也留了一段
+  早期写寄存器的代码。
 
-所以只能由 E907 固件在启动早期**手工写寄存器**：
+E907 侧那段代码长这样：
 
 ```c
 /* src/board_early.c */
@@ -403,6 +406,25 @@ static int v851s_e907_uart3_early_init(void)
 
 SYS_INIT(v851s_e907_uart3_early_init, PRE_KERNEL_1, 0);
 ```
+
+### 实测更正：这段 PIO 写入不生效
+
+2026-11 在 v12 镜像上做过隔离实验：把 `start_e907` 里的
+`insmod uart3pin.ko` 注释掉再重启，E907 正常进入 `running`、
+`trace0` 有心跳（说明上面这段已经跑过），但 A7 从 debugfs 读到的
+PE12/PE13 仍是 `func f`（`io_disabled`）。手动 `insmod` 后立刻
+变成 7。
+
+结论：
+
+- **E907 对 PIO 的写入是 no-op**，不报错，也不生效。
+- 真正完成 mux 的是 A7 的 `uart3pin.ko`。
+- 上面这段代码可以当 `SYS_INIT` 的示例读，把寄存器推导当练习，
+  但不要把“E907 自己配引脚”当成事实写进设计文档。
+
+这一段仍然保留在固件里：它无害，也提醒后来的人“这里曾经试过”。
+如果哪天换了 SoC 或总线权限，先按 6.8 的方法实测，再决定它是否
+真的有用。
 
 ### 寄存器怎么算出来的
 
@@ -712,7 +734,7 @@ undefined reference to `__device_dts_ord_...'
 |---|---|---|
 | 找不到板 | `board.yml` 名字/路径错 | `west boards` |
 | 编译报 `__device_dts_ord` | 节点没 okay/驱动没编 | `zephyr.dts`、`.config` |
-| 串口无输出 | 时钟没开/引脚没 mux | `board_early.c`、示波器 |
+| 串口无输出 | 引脚没 mux / 时钟没开 | A7 是否加载 `uart3pin.ko`、`board_early.c`、示波器 |
 | 中断不来 | CLIC ID 错、没 `interrupts` | 对照 GIC−16、`/proc/interrupts`（Linux 侧） |
 | 设备 `not ready` | 驱动 probe 失败 | 启动日志、`CONFIG_LOG` |
 | 固件加载后跑飞 | DRAM 窗口/入口地址错 | 对照 Linux `reserved-memory` |

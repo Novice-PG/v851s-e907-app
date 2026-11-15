@@ -18,6 +18,7 @@ Only the Python standard library is used (the board has Python 3.9).
 
 import argparse
 import base64
+import collections
 import ctypes
 import fcntl
 import hashlib
@@ -51,6 +52,13 @@ FRAME_CTL_RSP = 0x03
 FRAME_HELLO = 0x10
 FRAME_NAME = 0x11          # daemon -> linkr-ble: advertised name changed
 FRAME_EVENT = 0x12         # daemon -> linkr-ble: async mgmt event (reqid,flags,text)
+
+# FRAME_EVENT flag bits, shared with linkr_ble.c.  linkr_ble.c's
+# append_mgmt_event() already ORs EVT_ASYNC, so passing it here is redundant;
+# it is kept so a directly-written event frame documents its intent.
+EVT_FINAL = 0x0001
+EVT_ERROR = 0x0002
+EVT_ASYNC = 0x0004
 
 ADV_NAME = "Linkr Bee V851S"
 FIRMWARE_VERSION = "v851s-lizard-e907-v12"
@@ -328,6 +336,10 @@ def ws_recv_message(sock):
         opcode = header[0] & 0x0F
         masked = header[1] & 0x80
         length = header[1] & 0x7F
+
+        # RFC 6455: every client-to-server frame must be masked.
+        if not masked:
+            raise ValueError("unmasked client frame")
 
         if length == 126:
             length = struct.unpack("!H", _recv_exact(sock, 2))[0]
@@ -1359,6 +1371,7 @@ class Session:
 
     def diagnostics(self):
         """`@i?`: the same "@info <group> ..." collection the firmware sends."""
+        fw_version = _read_text("/etc/rootfs_version", 64) or FIRMWARE_VERSION
         with self.lock:
             peers = len(self.clients)
             uptime_ms = int((time.monotonic() - self.started) * 1000)
@@ -1367,7 +1380,7 @@ class Session:
         dropped = (stat.get("rx_dropped", 0) + stat.get("tx_dropped", 0))
         lines = [
             "@info fw version=%s zephyr=4.5.0 uart_ring=65536 "
-            "features=rpmsg,uart-reconfig,lan-ble\r\n" % FIRMWARE_VERSION,
+            "features=rpmsg,uart-reconfig,lan-ble\r\n" % fw_version,
             "@info sys uptime_ms=%d owner=0 security=0\r\n" % uptime_ms,
             "@info uart dropped=%d dropped_no_conn=0 buffer=%d/%d "
             "tx=%d/%d tx_dropped=%d\r\n" % (
@@ -1478,6 +1491,98 @@ class Session:
 
 
 # --------------------------------------------------------------------------
+# Per-client send queue
+# --------------------------------------------------------------------------
+
+# broadcast() runs on the rpmsg RX thread.  A client that stops reading must
+# not stall serial forwarding for every other client, so each client owns a
+# bounded queue drained by its own thread.  Serial data is dropped when the
+# backlog is full (the alternative is unbounded memory); control frames
+# (replies, events, pong, close) evict queued serial data instead of being
+# dropped, because losing them breaks the session.
+SEND_QUEUE_BYTES = 128 * 1024
+SEND_QUEUE_FRAMES = 512
+BLE_SEND_QUEUE_BYTES = 64 * 1024
+
+
+class SendQueue:
+    """Bounded, non-blocking, ordered frame queue with a single writer."""
+
+    def __init__(self, name, send, max_bytes=SEND_QUEUE_BYTES, on_fail=None):
+        self.name = name
+        self.send = send            # callable(frame) -> None, raises OSError
+        self.on_fail = on_fail      # called from _run on a fatal send error
+        self.max_bytes = max_bytes
+        self.items = collections.deque()
+        self.bytes = 0
+        self.alive = True
+        self.closed = False
+        self.dropped = 0
+        self.cv = threading.Condition()
+        self.thread = threading.Thread(target=self._run, name=name, daemon=True)
+        self.thread.start()
+
+    def put(self, kind, frame):
+        """Queue one frame.  Returns False if this client must be dropped."""
+        if self.closed:
+            return False
+        with self.cv:
+            full = (self.bytes + len(frame) > self.max_bytes
+                    or len(self.items) >= SEND_QUEUE_FRAMES)
+            if full and kind == "data":
+                # Slow consumer: drop the newest serial data, keep the link.
+                self.dropped += len(frame)
+                return True
+            while full:
+                if not self.items:
+                    self.closed = True
+                    self.cv.notify()
+                    return False
+                old_kind, old_frame = self.items.popleft()
+                self.bytes -= len(old_frame)
+                if old_kind == "data":
+                    self.dropped += len(old_frame)
+                else:
+                    # Control backlog: there is nothing left to give up.
+                    self.items.appendleft((old_kind, old_frame))
+                    self.bytes += len(old_frame)
+                    self.closed = True
+                    self.cv.notify()
+                    return False
+                full = (self.bytes + len(frame) > self.max_bytes
+                        or len(self.items) >= SEND_QUEUE_FRAMES)
+            self.items.append((kind, frame))
+            self.bytes += len(frame)
+            self.cv.notify()
+            return True
+
+    def close(self):
+        with self.cv:
+            self.alive = False
+            self.items.clear()
+            self.bytes = 0
+            self.cv.notify()
+
+    def _run(self):
+        while True:
+            with self.cv:
+                while self.alive and not self.items:
+                    self.cv.wait()
+                if not self.alive:
+                    return
+                _kind, frame = self.items.popleft()
+                self.bytes -= len(frame)
+            try:
+                self.send(frame)
+            except OSError:
+                with self.cv:
+                    self.alive = False
+                if self.on_fail is not None:
+                    self.on_fail()
+                return
+
+
+# --------------------------------------------------------------------------
 # WebSocket client
 # --------------------------------------------------------------------------
 
@@ -1489,7 +1594,19 @@ class Client:
         self.id = 0
         self.opened = False
         self.alive = True
-        self.send_lock = threading.Lock()
+        self.sendq = SendQueue("send-ws", self._send_raw,
+                               on_fail=self._send_failed)
+
+    def _send_raw(self, frame):
+        self.conn.sendall(frame)
+
+    def _send_failed(self):
+        # A stuck writer must not pin the socket: wake the reader thread.
+        self.alive = False
+        try:
+            self.conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
     def send_frame(self, opcode, payload):
         header = bytes([0x80 | opcode])
@@ -1500,8 +1617,9 @@ class Client:
             header += bytes([126]) + struct.pack("!H", length)
         else:
             header += bytes([127]) + struct.pack("!Q", length)
-        with self.send_lock:
-            self.conn.sendall(header + payload)
+        kind = "data" if opcode == 0x2 else "control"
+        if not self.sendq.put(kind, header + payload):
+            self._send_failed()
 
     def send_text(self, text):
         self.send_frame(0x1, text.encode("utf-8"))
@@ -1553,11 +1671,15 @@ class Client:
             log("ws client %d closed: %s" % (self.id, exc))
         finally:
             self.alive = False
+            self.sendq.close()
             self.session.unregister(self)
             try:
                 self.conn.close()
             except OSError:
                 pass
+            if self.sendq.dropped:
+                log("ws client %d dropped %d serial bytes (slow reader)" %
+                    (self.id, self.sendq.dropped))
             log("ws client %d disconnected" % self.id)
 
 
@@ -1573,17 +1695,31 @@ class BleClient:
         self.session = session
         self.id = 0
         self.alive = True
-        self.send_lock = threading.Lock()
+        self.sendq = SendQueue("send-ble", self._send_raw,
+                               max_bytes=BLE_SEND_QUEUE_BYTES,
+                               on_fail=self._send_failed)
         self.transport = "ble"
 
     @property
     def opened(self):
         return self.alive
 
+    def _send_raw(self, frame):
+        self.conn.sendall(frame)
+
+    def _send_failed(self):
+        self.alive = False
+        try:
+            self.conn.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
     def send_frame(self, ftype, payload):
-        header = bytes([ftype, len(payload) & 0xFF, (len(payload) >> 8) & 0xFF])
-        with self.send_lock:
-            self.conn.sendall(header + payload)
+        frame = (bytes([ftype, len(payload) & 0xFF,
+                        (len(payload) >> 8) & 0xFF]) + payload)
+        kind = "data" if ftype == FRAME_DATA else "control"
+        if not self.sendq.put(kind, frame):
+            self._send_failed()
 
     def send_binary(self, data):
         self.send_frame(FRAME_DATA, data)
@@ -1608,7 +1744,16 @@ class BleClient:
                 payload = _recv_exact(self.conn, length) if length else b""
                 if ftype == FRAME_DATA:
                     log("ble bridge %d -> rpmsg %d bytes" % (self.id, len(payload)))
-                    self.session.handle_binary(self, payload)
+                    reply = self.session.handle_binary(self, payload)
+                    if reply:
+                        # A rejected write must be visible to the phone.
+                        # There is no request id on a data frame, so report
+                        # it as an async error event (reqid 0) instead of
+                        # dropping it silently.
+                        log("ble bridge %d write rejected: %s" %
+                            (self.id, reply.strip()))
+                        self.send_event(0, EVT_FINAL | EVT_ERROR | EVT_ASYNC,
+                                        reply)
                 elif ftype == FRAME_CTL_REQ and len(payload) >= 4:
                     reqid = struct.unpack("<I", payload[:4])[0]
                     text = payload[4:].decode("utf-8", "replace")
@@ -1623,11 +1768,15 @@ class BleClient:
             log("ble bridge %d closed: %s" % (self.id, exc))
         finally:
             self.alive = False
+            self.sendq.close()
             self.session.unregister(self)
             try:
                 self.conn.close()
             except OSError:
                 pass
+            if self.sendq.dropped:
+                log("ble bridge %d dropped %d serial bytes (slow reader)" %
+                    (self.id, self.sendq.dropped))
             log("ble bridge %d disconnected" % self.id)
 
 
@@ -1837,11 +1986,12 @@ def _tls_connection(ctx, conn, addr, web_root, session):
         conn.settimeout(10.0)
         conn = ctx.wrap_socket(conn, server_side=True)
         conn.settimeout(None)
-        # Same slow-client guard as the plain listener: broadcast() runs on
-        # the rpmsg RX thread, so an unbounded sendall() here would stop
-        # serial forwarding for every client.
+        # Sends go through the client's own bounded send queue, so a slow
+        # reader cannot block the rpmsg RX thread.  This timeout only bounds
+        # how long the sender thread may sit in sendall() before the queue
+        # limit starts dropping serial data.
         conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO,
-                        struct.pack("ll", 10, 0))
+                        struct.pack("ll", 2, 0))
     except (ssl.SSLError, OSError) as exc:
         log("https handshake from %s:%d failed: %s" % (addr[0], addr[1], exc))
         try:
@@ -1900,7 +2050,7 @@ def main():
         conn, addr = server.accept()
         try:
             conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDTIMEO,
-                            struct.pack("ll", 10, 0))
+                            struct.pack("ll", 2, 0))
         except OSError:
             pass
         threading.Thread(target=handle_connection,

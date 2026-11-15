@@ -14,7 +14,7 @@
 ```text
 src/
   main.c            启动横幅、初始化桥、启动 OpenAMP、心跳
-  board_early.c     UART3 引脚/时钟，SYS_INIT 里跑
+  board_early.c     UART3 引脚/时钟早期初始化（PIO 部分实测不生效）
   linkr_bridge.c    UART3 ↔ 环形缓冲 ↔ rpmsg，两个线程
   openamp_slave.c   OpenAMP 初始化、IPM、端点池、rpmsg 回调
 ```
@@ -135,6 +135,11 @@ static int uart3_early_init(void)
 SYS_INIT(uart3_early_init, PRE_KERNEL_1, 0);
 ```
 
+> 实测提醒：这段代码确实会执行，但 **E907 写 PIO 不生效**。
+> PE12/PE13 真正被切成 UART3，是 A7 侧 `start_e907` 先
+> `insmod uart3pin.ko` 的结果（见 6.4）。如果你换了一个没有这个
+> 模块的 rootfs，UART3 不会通，要在 A7 侧补 mux，而不是改这里。
+
 ### 验证：回环/打印
 
 临时把 console 切到 UART3（只用于 bring-up）：
@@ -153,7 +158,8 @@ if (device_is_ready(u)) {
 
 用 USB-TTL 接 PE12(TX)/PE13(RX)/GND，115200 8N1。
 
-看到 `OK` 说明引脚 mux 和时钟都对了。
+看到 `OK` 说明引脚 mux 和时钟都对了——其中 mux 来自 A7 的
+`uart3pin.ko`，不是来自上面的 `board_early.c`。
 
 > 这一步没通，不要往下做。桥接的所有问题都会表现成
 > “没数据”，你会分不清是 UART 还是 rpmsg。

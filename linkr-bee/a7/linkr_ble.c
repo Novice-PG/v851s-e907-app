@@ -358,6 +358,18 @@ static void append_mgmt_msg(uint8_t type, guint32 reqid, guint16 flags,
 	struct mgmt_rsp *rsp;
 	gsize len = strlen(text);
 
+	/* Bound the queue: if no peer ever subscribes to the MGMT_RSP
+	 * indication, each management command would otherwise leak one entry.
+	 * Drop the oldest response when the queue is full. */
+	while (g_queue_get_length(&mgmt_q) >= 64) {
+		struct mgmt_rsp *old = g_queue_pop_head(&mgmt_q);
+
+		if (old != NULL) {
+			g_byte_array_unref(old->payload);
+			g_free(old);
+		}
+	}
+
 	rsp = g_new0(struct mgmt_rsp, 1);
 	rsp->reqid = reqid;
 	rsp->flags = flags;
@@ -1493,6 +1505,7 @@ static void register_objects(void)
 	g_dbus_connection_register_object(bus, APP_PATH, info->interfaces[0],
 					  &om_vtable, NULL, NULL, &err);
 	g_dbus_node_info_unref(info);
+	g_clear_error(&err);
 
 	info = g_dbus_node_info_new_for_xml(svc_xml, &err);
 	for (int i = 0; i < 3; i++) {
@@ -1501,6 +1514,7 @@ static void register_objects(void)
 			&svc_vtable, (gpointer)&services[i], NULL, &err);
 	}
 	g_dbus_node_info_unref(info);
+	g_clear_error(&err);
 
 	info = g_dbus_node_info_new_for_xml(chr_xml, &err);
 	for (int i = 0; i < CK_COUNT; i++) {
@@ -1509,16 +1523,19 @@ static void register_objects(void)
 			(gpointer)&chars[i], NULL, &err);
 	}
 	g_dbus_node_info_unref(info);
+	g_clear_error(&err);
 
 	info = g_dbus_node_info_new_for_xml(adv_xml, &err);
 	g_dbus_connection_register_object(bus, ADV_PATH, info->interfaces[0],
 					  &adv_vtable, NULL, NULL, &err);
 	g_dbus_node_info_unref(info);
+	g_clear_error(&err);
 
 	info = g_dbus_node_info_new_for_xml(agent_xml, &err);
 	g_dbus_connection_register_object(bus, AGENT_PATH, info->interfaces[0],
 					  &agent_vtable, NULL, NULL, &err);
 	g_dbus_node_info_unref(info);
+	g_clear_error(&err);
 }
 
 int main(int argc, char **argv)
