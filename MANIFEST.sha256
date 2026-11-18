@@ -57,7 +57,7 @@ c32510f2fce310340f8e0dfebd7aa1bf  ./docs/DEPLOY.md
 bd964b881d0db1d6ddbce45aad8e63ab  ./docs/PROTOCOL.md
 39bfebb313dd6710afcf1c4e107e6f2f  ./docs/REVIEW.md
 56502f7c8c8157ecab437753a6894a04  ./docs/TALK.zh-CN.md
-41e41bc6c09c4de399d4cf8ce2e9c872  ./firmware/zephyr_e907.elf
+61572d2d9d23f0b75b3350db2011c6ae  ./firmware/zephyr_e907.elf
 8c0b983ba3d3eb5cc9a99d6315e627ba  ./.gitignore
 fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 911c32748a9f2cfb20196cbf3533a147  ./linkr-bee/a7/ble-adv-data.py
