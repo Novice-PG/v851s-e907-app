@@ -1347,6 +1347,138 @@ static void unregister_adv_done(GObject *source, GAsyncResult *res,
 	register_adv();
 }
 
+/* ------------------------------------------------------------------ */
+/* Re-arm the advertisement after the last central disconnects        */
+/* ------------------------------------------------------------------ */
+
+/* The XR829 stops transmitting while a central is attached. BlueZ 5.54
+ * keeps the advertisement instance registered across the disconnect, but the
+ * controller does not always re-enable it: the board stays usable for the
+ * client that just left and never becomes discoverable again until
+ * linkr-ble is restarted. Re-registering the advertisement makes the vendor
+ * kernel push LE_SET_ADV_ENABLE again. */
+static gboolean adv_restart_pending;
+
+static gboolean adv_restart_timeout(gpointer data)
+{
+	(void)data;
+	adv_restart_pending = FALSE;
+	if (!adv_registered) {
+		register_adv();
+		return G_SOURCE_REMOVE;
+	}
+	adv_registered = FALSE;
+	g_dbus_connection_call(
+		bus, "org.bluez", "/org/bluez/hci0",
+		"org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement",
+		g_variant_new("(o)", ADV_PATH), NULL,
+		G_DBUS_CALL_FLAGS_NONE, 5000, NULL, unregister_adv_done, NULL);
+	return G_SOURCE_REMOVE;
+}
+
+static void schedule_adv_restart(void)
+{
+	if (adv_restart_pending) {
+		return;
+	}
+	adv_restart_pending = TRUE;
+	/* Give BlueZ time to finish tearing the link down; the controller
+	 * rejects a new advertisement while the old link is still active. */
+	g_timeout_add(700, adv_restart_timeout, NULL);
+}
+
+/* Only re-arm when no other central is still connected: the XR829 cannot
+ * advertise while a link exists, so doing it early would just make
+ * register_adv() retry every two seconds until the last peer leaves. */
+static void count_connected_done(GObject *source, GAsyncResult *res,
+				 gpointer user_data)
+{
+	GError *err = NULL;
+	GVariant *r, *objects;
+	GVariantIter *iter;
+	GVariant *ifaces;
+	const char *path;
+	gboolean any_connected = FALSE;
+
+	(void)user_data;
+	r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
+	if (!r) {
+		logmsg("device list failed: %s", err->message);
+		g_error_free(err);
+		return;
+	}
+	objects = g_variant_get_child_value(r, 0);
+	g_variant_get(objects, "a{oa{sa{sv}}}", &iter);
+	while (g_variant_iter_next(iter, "{&o@a{sa{sv}}}", &path, &ifaces)) {
+		GVariant *dev, *connected;
+
+		dev = g_variant_lookup_value(ifaces, "org.bluez.Device1",
+					     G_VARIANT_TYPE_VARDICT);
+		if (dev) {
+			connected = g_variant_lookup_value(
+				dev, "Connected", G_VARIANT_TYPE_BOOLEAN);
+			if (connected) {
+				if (g_variant_get_boolean(connected)) {
+					any_connected = TRUE;
+				}
+				g_variant_unref(connected);
+			}
+			g_variant_unref(dev);
+		}
+		g_variant_unref(ifaces);
+		if (any_connected) {
+			break;
+		}
+	}
+	g_variant_iter_free(iter);
+	g_variant_unref(objects);
+	g_variant_unref(r);
+
+	if (!any_connected) {
+		logmsg("last peer disconnected; re-registering advertisement");
+		schedule_adv_restart();
+	}
+}
+
+static void on_bluez_props(GDBusConnection *conn, const char *sender,
+			   const char *object_path, const char *interface_name,
+			   const char *signal_name, GVariant *params,
+			   gpointer user_data)
+{
+	GVariant *changed, *invalidated, *connected;
+	const char *iface;
+
+	(void)conn;
+	(void)sender;
+	(void)object_path;
+	(void)interface_name;
+	(void)signal_name;
+	(void)user_data;
+
+	if (!g_variant_is_of_type(params, G_VARIANT_TYPE("(sa{sv}as)"))) {
+		return;
+	}
+	g_variant_get(params, "(&s@a{sv}@as)", &iface, &changed,
+		      &invalidated);
+	if (!strcmp(iface, "org.bluez.Device1")) {
+		connected = g_variant_lookup_value(
+			changed, "Connected", G_VARIANT_TYPE_BOOLEAN);
+		if (connected) {
+			if (!g_variant_get_boolean(connected)) {
+				g_dbus_connection_call(
+					bus, "org.bluez", "/",
+					"org.freedesktop.DBus.ObjectManager",
+					"GetManagedObjects", NULL, NULL,
+					G_DBUS_CALL_FLAGS_NONE, 3000, NULL,
+					count_connected_done, NULL);
+			}
+			g_variant_unref(connected);
+		}
+	}
+	g_variant_unref(changed);
+	g_variant_unref(invalidated);
+}
+
 static void apply_new_name(const char *name, gsize len)
 {
 	if (len == 0 || len > BLE_NAME_MAX) {
@@ -1571,6 +1703,10 @@ int main(int argc, char **argv)
 		logmsg("system bus: %s", err->message);
 		return 1;
 	}
+	g_dbus_connection_signal_subscribe(
+		bus, "org.bluez", "org.freedesktop.DBus.Properties",
+		"PropertiesChanged", NULL, "org.bluez.Device1",
+		G_DBUS_SIGNAL_FLAGS_NONE, on_bluez_props, NULL, NULL);
 	load_device_id();
 	load_adv_name();
 	register_objects();

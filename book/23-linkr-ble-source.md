@@ -554,6 +554,37 @@ static void apply_new_name(const char *name, gsize len)
 
 daemon 通过 `FRAME_NAME` 发新名字，linkr-ble 重新注册广播。
 
+### 断连后重新武装广播
+
+XR829 在连接期间停止发送广播。最后一个 central 断开后，BlueZ 5.54
+仍把广播实例留在已注册状态，但厂商内核不一定会重新打开广播使能：
+板子对刚断开的客户端可用，却不再出现在扫描结果里，直到重启
+linkr-ble。表现和“板子死机”很像。
+
+linkr-ble 订阅 BlueZ 的 `Device1` 属性变化。收到
+`Connected=false` 后，先查 `GetManagedObjects`，确认没有其它连接，
+再延迟 700 ms 做一次 `UnregisterAdvertisement` +
+`RegisterAdvertisement`。注册回调本来就会调用
+`ble-adv-data.py`，所以广播数据也会一起重推。
+
+```c
+static void on_bluez_props(...)
+{
+    /* PropertiesChanged(sa{sv}as) */
+    if (!strcmp(iface, "org.bluez.Device1") &&
+        connected == FALSE) {
+        g_dbus_connection_call(
+            bus, "org.bluez", "/",
+            "org.freedesktop.DBus.ObjectManager",
+            "GetManagedObjects", ... count_connected_done, NULL);
+    }
+}
+```
+
+为什么要先数连接数？XR829 不能在还有连接时广播。若提前重新注册，
+`register_adv()` 会每 2 秒失败重试，直到最后一个连接也断开。等
+连接数归零再注册，只失败一次。
+
 ---
 
 ## 23.9 实验：观察 D-Bus
@@ -615,6 +646,7 @@ cat /var/run/linkr-bt-mtu/*
 | 数据重复 | 可靠服务 seq 处理 | gap 日志 |
 | socket 断 | daemon 重启 | 重连日志 |
 | 改名无效 | 没重新注册广播 | `apply_new_name` |
+| 断连后搜不到 | 广播没重新使能 | `on_bluez_props` 日志 |
 | 配对失败 | Agent 没注册 | BlueZ 日志 |
 | 内存增长 | 帧未释放/队列积压 | `VmRSS` |
 
