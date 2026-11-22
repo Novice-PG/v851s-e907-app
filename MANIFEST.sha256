@@ -21,7 +21,7 @@ bc5b7e4034e70554d55fa54e17c5db1c  ./book/18-boot-scripts-persistence.md
 f835427ab98f471a4c484a6d6225a865  ./book/20-http-websocket.md
 c5952b0f7365719bac4dee2c13685e0f  ./book/21-https-certs-tokens.md
 36b5a27459705fb951dc27f97d51094a  ./book/22-ble-bluez-gatt.md
-ac442c3e88d68d31b4cb41aacb5c14f3  ./book/23-linkr-ble-source.md
+46967eb4db461ebfca2f45d0d18b3e09  ./book/23-linkr-ble-source.md
 202f9c715ff337970df269666c77de60  ./book/24-throughput-fragmentation.md
 42cbb347502ab36e129de48cfd5731d6  ./book/25-wifi-network.md
 414048e910ca8e7cdd1031eda21ca24b  ./book/26-web-frontend.md
@@ -64,8 +64,8 @@ fa818a259cbed7ce8bc2a22d35a464fc  ./LICENSE
 b76bcb7da1a65ea84c349c705ff6e976  ./linkr-bee/a7/certs/san.cnf
 63e9ec05fd3848ffc2b95833877f3e51  ./linkr-bee/a7/legacy/S54bluetooth.off
 5184c687971302bfd7b234ff8f319afd  ./linkr-bee/a7/linkr-bee-daemon
-8fd15c864b43ccfa466a4c9beccc8d2d  ./linkr-bee/a7/linkr-ble
-6af59ff26b7ac88fd16ca3272e5a59b1  ./linkr-bee/a7/linkr_ble.c
+956735c6abbb477ce10c5e6e93b65297  ./linkr-bee/a7/linkr-ble
+0a2f1bb69f9615a17a7c8025fdf79fa6  ./linkr-bee/a7/linkr_ble.c
 a2e189861efdc8e00741a9578c49ffb2  ./linkr-bee/a7/main.conf
 305b61f36fc3012433037db0435fa254  ./linkr-bee/a7/S53linkr
 0b0179ad1de46720a192aeb015727183  ./linkr-bee/a7/S54bluetooth

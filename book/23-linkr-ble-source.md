@@ -563,9 +563,8 @@ linkr-ble。表现和“板子死机”很像。
 
 linkr-ble 订阅 BlueZ 的 `Device1` 属性变化。收到
 `Connected=false` 后，先查 `GetManagedObjects`，确认没有其它连接，
-再延迟 700 ms 做一次 `UnregisterAdvertisement` +
-`RegisterAdvertisement`。注册回调本来就会调用
-`ble-adv-data.py`，所以广播数据也会一起重推。
+再延迟 700 ms，直接用 `hcitool` 发一条
+`LE_SET_ADV_ENABLE = 01`：
 
 ```c
 static void on_bluez_props(...)
@@ -581,9 +580,16 @@ static void on_bluez_props(...)
 }
 ```
 
-为什么要先数连接数？XR829 不能在还有连接时广播。若提前重新注册，
-`register_adv()` 会每 2 秒失败重试，直到最后一个连接也断开。等
-连接数归零再注册，只失败一次。
+为什么不重新注册广播？实测 XR829 在十几次
+`UnregisterAdvertisement` + `RegisterAdvertisement` 之后会彻底停止
+发送，虽然 BlueZ 仍报告实例已注册；反复执行 `ble-adv-data.py`
+（`LE_SET_ADV_DATA`）也有同样的效果。直接打开广播使能则不动注册
+状态，也不动控制器里已经保存的 AD 数据，连续 30 次断开/重连后仍能
+被扫描到。
+
+为什么要先数连接数？XR829 不能在还有连接时广播。若提前打开，
+只会失败，等最后一个连接也断开后还要再来一次。等连接数归零再开，
+一次就够。
 
 ---
 

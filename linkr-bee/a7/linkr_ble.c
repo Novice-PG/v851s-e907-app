@@ -1225,6 +1225,12 @@ static void load_device_id(void)
 static gboolean gatt_registered;
 static gboolean adv_registered;
 static gboolean reg_in_flight;
+/* The controller remembers the AD/scan-response data across an advertising
+ * disable/enable, so it only has to be pushed when it changes. Pushing it
+ * while the XR829 is already advertising makes the controller stop
+ * transmitting after a few commands; a reconnect must therefore not re-push
+ * unchanged data. */
+static gboolean adv_data_dirty = TRUE;
 
 static gboolean register_gatt(gpointer data);
 static void register_adv(void);
@@ -1269,7 +1275,10 @@ static void register_adv_cb(GObject *source, GAsyncResult *res,
 		       err->message);
 		if (strstr(err->message, "Already")) {
 			adv_registered = TRUE;
-			push_adv_data_to_controller();
+			if (adv_data_dirty) {
+				adv_data_dirty = FALSE;
+				push_adv_data_to_controller();
+			}
 		}
 		g_error_free(err);
 		if (!adv_registered) {
@@ -1279,7 +1288,10 @@ static void register_adv_cb(GObject *source, GAsyncResult *res,
 	}
 	g_variant_unref(r);
 	adv_registered = TRUE;
-	push_adv_data_to_controller();
+	if (adv_data_dirty) {
+		adv_data_dirty = FALSE;
+		push_adv_data_to_controller();
+	}
 	logmsg("advertising as \"%s\"", adv_name);
 }
 
@@ -1353,11 +1365,32 @@ static void unregister_adv_done(GObject *source, GAsyncResult *res,
 
 /* The XR829 stops transmitting while a central is attached. BlueZ 5.54
  * keeps the advertisement instance registered across the disconnect, but the
- * controller does not always re-enable it: the board stays usable for the
- * client that just left and never becomes discoverable again until
- * linkr-ble is restarted. Re-registering the advertisement makes the vendor
- * kernel push LE_SET_ADV_ENABLE again. */
+ * vendor kernel does not re-enable advertising: the board stays usable for
+ * the client that just left and never becomes discoverable again until
+ * linkr-ble is restarted.
+ *
+ * Toggling the BlueZ instance (Unregister + Register) appears to work, but
+ * after a dozen reconnects the controller stops transmitting even though
+ * BlueZ reports the instance as registered; repeated LE_SET_ADV_DATA has the
+ * same effect. Both were measured on the XR829. A single raw
+ * LE_SET_ADV_ENABLE leaves the registration and the controller's AD data
+ * untouched and reliably brings the advertisement back. */
 static gboolean adv_restart_pending;
+
+static void enable_advertising_raw(void)
+{
+	/* g_spawn_command_line_async does not run a shell, so the
+	 * redirections need an explicit /bin/sh. */
+	const char *cmd =
+		"/bin/sh -c '/usr/bin/hcitool -i hci0 cmd 0x08 0x000a 01 "
+		">/dev/null 2>&1'";
+	GError *err = NULL;
+
+	if (!g_spawn_command_line_async(cmd, &err)) {
+		logmsg("advertising re-enable failed: %s", err->message);
+		g_error_free(err);
+	}
+}
 
 static gboolean adv_restart_timeout(gpointer data)
 {
@@ -1367,12 +1400,8 @@ static gboolean adv_restart_timeout(gpointer data)
 		register_adv();
 		return G_SOURCE_REMOVE;
 	}
-	adv_registered = FALSE;
-	g_dbus_connection_call(
-		bus, "org.bluez", "/org/bluez/hci0",
-		"org.bluez.LEAdvertisingManager1", "UnregisterAdvertisement",
-		g_variant_new("(o)", ADV_PATH), NULL,
-		G_DBUS_CALL_FLAGS_NONE, 5000, NULL, unregister_adv_done, NULL);
+	enable_advertising_raw();
+	logmsg("re-enabled advertising after disconnect");
 	return G_SOURCE_REMOVE;
 }
 
@@ -1435,7 +1464,7 @@ static void count_connected_done(GObject *source, GAsyncResult *res,
 	g_variant_unref(r);
 
 	if (!any_connected) {
-		logmsg("last peer disconnected; re-registering advertisement");
+		logmsg("last peer disconnected; re-enabling advertisement");
 		schedule_adv_restart();
 	}
 }
@@ -1494,6 +1523,7 @@ static void apply_new_name(const char *name, gsize len)
 	}
 	memcpy(adv_name, name, len);
 	adv_name[len] = 0;
+	adv_data_dirty = TRUE;
 
 	set_adapter_prop("Alias", g_variant_new_string(adv_name));
 	logmsg("advertised name changed to \"%s\"", adv_name);
